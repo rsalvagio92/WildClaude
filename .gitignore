@@ -5,6 +5,9 @@ store/
 .env.local
 *.pid
 *.log
+*.bak
+*.bak*
+*.swp
 .reference/
 .DS_Store
 .vscode/

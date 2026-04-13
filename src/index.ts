@@ -234,6 +234,9 @@ async function main(): Promise<void> {
   };
   process.on('SIGINT', () => void shutdown());
   process.on('SIGTERM', () => void shutdown());
+  process.on('unhandledRejection', (reason) => {
+    logger.error({ reason }, 'Unhandled promise rejection');
+  });
 
   logger.info({ agentId: AGENT_ID }, 'Starting WildClaude...');
 

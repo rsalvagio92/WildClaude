@@ -78,7 +78,7 @@ function sanitizeFilename(name: string): string {
 }
 
 /**
- * Download a file from Telegram and save it to workspace/uploads/.
+ * Download a file from Telegram and save it to USER_DATA_DIR/uploads/.
  * Returns the local file path.
  *
  * Steps:
@@ -163,7 +163,7 @@ export function buildVideoMessage(localPath: string, caption?: string): string {
 }
 
 /**
- * Clean up old files from workspace/uploads/.
+ * Clean up old files from USER_DATA_DIR/uploads/.
  * Deletes files older than maxAgeMs (default: 24 hours).
  */
 export function cleanupOldUploads(maxAgeMs: number = 24 * 60 * 60 * 1000): void {

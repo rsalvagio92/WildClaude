@@ -95,7 +95,7 @@ describe('UPLOADS_DIR', () => {
     expect(path.isAbsolute(UPLOADS_DIR)).toBe(true);
   });
 
-  it('ends with workspace/uploads', () => {
-    expect(UPLOADS_DIR).toMatch(/workspace[/\\]uploads$/);
+  it('ends with uploads inside user data dir', () => {
+    expect(UPLOADS_DIR).toMatch(/uploads$/);
   });
 });
