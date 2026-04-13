@@ -1,0 +1,15 @@
+node_modules/
+dist/
+store/
+.env
+.env.local
+*.pid
+*.log
+.reference/
+.DS_Store
+.vscode/
+RESEARCH.md
+.mcp.json
+workspace/
+playwright-tests/
+playwright.config.ts

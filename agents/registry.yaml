@@ -1,0 +1,169 @@
+# WildClaude Agent Registry
+# 5 lanes, 17 agents
+# Trigger: @<id> <prompt> or /delegate <id> <prompt>
+
+agents:
+
+  # ── BUILD ──────────────────────────────────────────────────────────────────
+
+  - id: architect
+    name: Architect
+    description: >
+      System design, architecture decisions, interface contracts, trade-off
+      analysis, scalability planning. Trigger keywords: architecture, design,
+      system design, interfaces, scalability, structure, diagram, ADR.
+    model: claude-opus-4-6
+    lane: build
+
+  - id: coder
+    name: Coder
+    description: >
+      Code implementation, feature building, refactoring, integration.
+      Trigger keywords: implement, code, build, feature, refactor, write,
+      create, add, integrate.
+    model: claude-sonnet-4-6
+    lane: build
+
+  - id: debugger
+    name: Debugger
+    description: >
+      Root-cause analysis, error diagnosis, bug fixing. Trigger keywords:
+      debug, error, fix, broken, crash, stack trace, failing, not working,
+      exception, bug.
+    model: claude-sonnet-4-6
+    lane: build
+
+  - id: tester
+    name: Tester
+    description: >
+      Test writing, TDD, coverage analysis, verification strategies. Trigger
+      keywords: test, verify, coverage, TDD, assertion, spec, unit test,
+      integration test, test suite.
+    model: claude-sonnet-4-6
+    lane: build
+
+  # ── REVIEW ─────────────────────────────────────────────────────────────────
+
+  - id: code-reviewer
+    name: Code Reviewer
+    description: >
+      Comprehensive code review — correctness, design quality, maintainability,
+      performance, conventions. Trigger keywords: review, code review, PR review,
+      feedback, quality check, pre-merge.
+    model: claude-opus-4-6
+    lane: review
+
+  - id: security-reviewer
+    name: Security Reviewer
+    description: >
+      Vulnerability detection, threat modeling, security hardening. Trigger
+      keywords: security, vulnerability, OWASP, injection, secrets, auth,
+      pentest, CVE, exposed, insecure.
+    model: claude-sonnet-4-6
+    lane: review
+
+  # ── DOMAIN ─────────────────────────────────────────────────────────────────
+
+  - id: researcher
+    name: Researcher
+    description: >
+      Web research, information synthesis, factual investigation. Trigger
+      keywords: research, find out, look up, investigate, what is, how does,
+      compare, competitive, market.
+    model: claude-sonnet-4-6
+    lane: domain
+
+  - id: writer
+    name: Writer
+    description: >
+      Documentation, technical writing, content creation. Trigger keywords:
+      write, document, explain, draft, blog post, README, guide, summarize,
+      content.
+    model: claude-sonnet-4-6
+    lane: domain
+
+  - id: data-analyst
+    name: Data Analyst
+    description: >
+      Data exploration, analysis, visualization, insights. Trigger keywords:
+      analyze, data, CSV, spreadsheet, chart, statistics, trends, patterns,
+      numbers.
+    model: claude-sonnet-4-6
+    lane: domain
+
+  # ── COORDINATION ────────────────────────────────────────────────────────────
+
+  - id: orchestrator
+    name: Orchestrator
+    description: >
+      Multi-agent coordination, task decomposition, delegation. Trigger keywords:
+      orchestrate, coordinate, delegate, parallel, multi-step, manage agents,
+      complex task, team.
+    model: claude-opus-4-6
+    lane: coordination
+
+  - id: critic
+    name: Critic
+    description: >
+      Gap analysis, assumption challenging, risk identification. Trigger keywords:
+      critique, challenge, devil's advocate, review assumptions, find gaps,
+      risks, stress-test, what could go wrong.
+    model: claude-opus-4-6
+    lane: coordination
+
+  - id: dashboard-builder
+    name: Dashboard Builder
+    description: >
+      Creates and manages external service dashboards. Adds Vercel, Neon,
+      Supabase, Stripe, and custom API dashboards to config.json. Trigger
+      keywords: dashboard, create dashboard, add dashboard, configure dashboard,
+      vercel dashboard, neon dashboard, supabase dashboard, remove dashboard.
+    model: claude-sonnet-4-6
+    lane: coordination
+
+  # ── LIFE ────────────────────────────────────────────────────────────────────
+
+  - id: coach
+    name: Coach
+    description: >
+      Life coaching, goal-setting, big decisions, weekly reviews, motivation,
+      values alignment. Trigger keywords: coach, goal, decide, review, stuck,
+      vision, motivation, priorities, life, clarity, weekly review, reflect.
+    model: claude-opus-4-6
+    lane: life
+
+  - id: organizer
+    name: Organizer
+    description: >
+      Task management, habit tracking, scheduling, daily planning. Trigger
+      keywords: tasks, to-do, habits, schedule, plan today, plan week,
+      remind, organize, routine.
+    model: claude-sonnet-4-6
+    lane: life
+
+  - id: finance
+    name: Finance
+    description: >
+      Budget tracking, expense logging, invoices, financial overview. Trigger
+      keywords: budget, expense, invoice, money, spending, revenue, financial,
+      log expense, how much, bank.
+    model: claude-sonnet-4-6
+    lane: life
+
+  - id: health
+    name: Health
+    description: >
+      Workout logging, nutrition tracking, health habit monitoring. Trigger
+      keywords: workout, exercise, nutrition, meals, health, fitness, calories,
+      log workout, steps, sleep.
+    model: claude-haiku-4-5
+    lane: life
+
+  - id: learner
+    name: Learner
+    description: >
+      Learning roadmaps, knowledge synthesis, study sessions. Trigger keywords:
+      learn, study, roadmap, reading, course, skill, explain, teach me,
+      book notes, learning goal.
+    model: claude-sonnet-4-6
+    lane: life

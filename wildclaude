@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# WildClaude CLI — entry point
+# Run from project root: ./wildclaude <command>
+# Install globally: ./wildclaude setup
+
+# Resolve symlinks to find the real script location
+SOURCE="${BASH_SOURCE[0]}"
+while [ -L "$SOURCE" ]; do
+  DIR="$(cd "$(dirname "$SOURCE")" && pwd)"
+  SOURCE="$(readlink "$SOURCE")"
+  # Resolve relative symlinks
+  [[ "$SOURCE" != /* ]] && SOURCE="$DIR/$SOURCE"
+done
+SCRIPT_DIR="$(cd "$(dirname "$SOURCE")" && pwd)"
+
+export WILDCLAUDE_DIR="$SCRIPT_DIR"
+exec bash "$SCRIPT_DIR/scripts/wildclaude.sh" "$@"
