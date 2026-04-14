@@ -12,7 +12,7 @@
 
 import { PROJECT_ROOT } from './config.js';
 import { logger } from './logger.js';
-import { createScheduledTask, getAllScheduledTasks } from './db.js';
+import { createScheduledTask, getAllScheduledTasks, deleteScheduledTask, updateScheduledTaskPrompt } from './db.js';
 import { loadUserConfig } from './overlay.js';
 import { computeNextRun } from './scheduler.js';
 
@@ -60,13 +60,16 @@ export const DEFAULT_AUTOMATIONS: AutomationDef[] = [
  * Sync automations into the scheduled_tasks DB.
  *
  * Logic:
- *  1. Load user config automations (for enabled/disabled overrides + custom schedule)
+ *  1. Load user config automations (for enabled/disabled overrides + custom schedule + custom prompts)
  *  2. For each DEFAULT_AUTOMATION:
- *     - If user config has a matching id with enabled=false → skip (disabled)
- *     - If user config has a matching id with a custom cron → use that cron
+ *     - If user config has a matching id with enabled=false → DELETE from DB (disable)
+ *     - If user config has a matching id with a custom prompt → UPDATE the prompt in DB
  *     - If not already in the DB → insert it
- *     - If already in the DB → leave it alone (preserves last_run, next_run etc.)
- *  3. For each user config automation that isn't in DEFAULT_AUTOMATIONS → insert if missing
+ *     - If already in the DB and no custom prompt → leave it alone (preserves last_run, next_run etc.)
+ *  3. For each user config automation that isn't in DEFAULT_AUTOMATIONS:
+ *     - If enabled=false and exists in DB → DELETE it
+ *     - If enabled=true and not in DB → insert it
+ *     - If enabled=true and in DB with custom prompt → update the prompt
  *
  * Safe to call multiple times — never creates duplicates.
  */
@@ -87,11 +90,25 @@ export function syncAutomations(agentId = 'main'): void {
 
     // User explicitly disabled this automation
     if (userOverride && userOverride.enabled === false) {
-      logger.info({ id: def.id }, 'Automation disabled by user config, skipping');
+      if (existingById.has(def.id)) {
+        deleteScheduledTask(def.id);
+        logger.info({ id: def.id }, 'Automation disabled by user config, deleted from DB');
+      } else {
+        logger.debug({ id: def.id }, 'Automation disabled by user config (was not in DB)');
+      }
       continue;
     }
 
-    // Already in the DB — don't touch it (preserves schedule, last_run, etc.)
+    // Check if user provided custom prompt
+    if (userOverride && userOverride.prompt) {
+      if (existingById.has(def.id)) {
+        updateScheduledTaskPrompt(def.id, userOverride.prompt);
+        logger.info({ id: def.id }, 'Automation prompt updated from user config');
+      }
+      // If it doesn't exist in DB yet, it will be created below with the custom prompt
+    }
+
+    // Already in the DB and no custom prompt — don't touch it (preserves schedule, last_run, etc.)
     if (existingById.has(def.id)) {
       logger.debug({ id: def.id }, 'Automation already exists in DB, skipping');
       continue;
@@ -99,10 +116,12 @@ export function syncAutomations(agentId = 'main'): void {
 
     // Use user's custom cron if provided, otherwise fall back to default
     const cron = userOverride?.cron || def.cron;
+    // Use user's custom prompt if provided, otherwise use default
+    const prompt = userOverride?.prompt || def.prompt;
 
     try {
       const nextRun = computeNextRun(cron);
-      createScheduledTask(def.id, def.prompt, cron, nextRun, agentId);
+      createScheduledTask(def.id, prompt, cron, nextRun, agentId);
       logger.info({ id: def.id, cron }, 'Automation installed');
     } catch (err) {
       logger.warn({ err, id: def.id }, 'Failed to install automation (non-fatal)');
@@ -114,15 +133,27 @@ export function syncAutomations(agentId = 'main'): void {
     // Skip ones that match a default id (handled above)
     if (DEFAULT_AUTOMATIONS.some((d) => d.id === userAuto.id)) continue;
 
-    // Skip disabled
-    if (userAuto.enabled === false) continue;
-
-    // Already in the DB
-    if (existingById.has(userAuto.id)) {
-      logger.debug({ id: userAuto.id }, 'Custom automation already in DB, skipping');
+    // Handle disabled custom automations
+    if (userAuto.enabled === false) {
+      if (existingById.has(userAuto.id)) {
+        deleteScheduledTask(userAuto.id);
+        logger.info({ id: userAuto.id }, 'Custom automation disabled, deleted from DB');
+      }
       continue;
     }
 
+    // Handle enabled custom automations
+    if (existingById.has(userAuto.id)) {
+      // Update prompt if provided
+      if (userAuto.prompt) {
+        updateScheduledTaskPrompt(userAuto.id, userAuto.prompt);
+        logger.info({ id: userAuto.id }, 'Custom automation prompt updated');
+      }
+      logger.debug({ id: userAuto.id }, 'Custom automation already in DB, skipping insert');
+      continue;
+    }
+
+    // Create new custom automation
     try {
       const nextRun = computeNextRun(userAuto.cron);
       createScheduledTask(userAuto.id, userAuto.prompt, userAuto.cron, nextRun, agentId);

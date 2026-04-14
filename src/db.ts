@@ -1186,6 +1186,10 @@ export function resetStuckTasks(agentId: string): number {
   return result.changes;
 }
 
+export function updateScheduledTaskPrompt(id: string, prompt: string): void {
+  getDb().prepare('UPDATE scheduled_tasks SET prompt = ? WHERE id = ?').run(prompt, id);
+}
+
 export function deleteScheduledTask(id: string): void {
   getDb().prepare('DELETE FROM scheduled_tasks WHERE id = ?').run(id);
 }
