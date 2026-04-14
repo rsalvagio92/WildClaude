@@ -352,7 +352,7 @@ textarea.form-input { resize: vertical; min-height: 70px; }
         <span class="nav-icon">&#129302;</span><span class="nav-label">Agent Hub</span>
       </div>
       <div class="nav-item" data-page="workflow" onclick="navigate('workflow')">
-        <span class="nav-icon">&#128260;</span><span class="nav-label">Workflow Engine</span>
+        <span class="nav-icon">&#9200;</span><span class="nav-label">Automation</span>
       </div>
       <div class="nav-item" data-page="plugins" onclick="navigate('plugins')">
         <span class="nav-icon">&#129520;</span><span class="nav-label">Skills &amp; MCP</span>
@@ -511,31 +511,85 @@ textarea.form-input { resize: vertical; min-height: 70px; }
         </div>
       </div>
 
-      <!-- Page 5: Workflow Engine -->
+      <!-- Page 5: Automation -->
       <div class="page" id="page-workflow">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
-          <div class="section-heading" style="margin:0">&#128260; Workflow Engine</div>
-          <button class="btn btn-primary btn-sm" onclick="toggleNewTaskForm()">+ Schedule Task</button>
+          <div class="section-heading" style="margin:0">&#9200; Automation</div>
+          <button class="btn btn-primary btn-sm" onclick="showNewAutomationModal()">+ New Automation</button>
         </div>
-        <div id="workflow-form" style="display:none" class="new-task-form">
-          <div class="card-title" style="margin-bottom:12px">Schedule New Task</div>
-          <div class="form-row">
-            <textarea id="wf-prompt" class="form-input" placeholder="Task prompt..." rows="3"></textarea>
+        <div id="automations-list"><div class="chat-thinking" style="padding:12px 0">Loading automations...</div></div>
+
+        <!-- Ad-hoc Scheduled Tasks -->
+        <div style="margin-top:24px">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+            <div class="section-heading" style="margin:0;font-size:14px">&#9881; Ad-hoc Tasks</div>
+            <button class="btn btn-sm" onclick="toggleNewTaskForm()">+ Task</button>
           </div>
-          <div class="form-row">
-            <input id="wf-cron" class="form-input mono" type="text" placeholder="Cron expression (e.g. 0 9 * * *)" />
+          <div id="workflow-form" style="display:none" class="new-task-form">
+            <div class="card-title" style="margin-bottom:12px">Schedule One-off Task</div>
+            <div class="form-row">
+              <textarea id="wf-prompt" class="form-input" placeholder="Task prompt..." rows="3"></textarea>
+            </div>
+            <div class="form-row">
+              <input id="wf-cron" class="form-input mono" type="text" placeholder="Cron expression (e.g. 0 9 * * *)" />
+            </div>
+            <div style="display:flex;gap:8px">
+              <button class="btn btn-primary btn-sm" onclick="createWorkflowTask()">Schedule</button>
+              <button class="btn btn-sm" onclick="toggleNewTaskForm()">Cancel</button>
+            </div>
           </div>
-          <div style="display:flex;gap:8px">
-            <button class="btn btn-primary btn-sm" onclick="createWorkflowTask()">Schedule</button>
-            <button class="btn btn-sm" onclick="toggleNewTaskForm()">Cancel</button>
+          <div id="workflow-list"></div>
+          <div id="workflow-loading" class="chat-thinking" style="padding:20px 0;display:none">Loading...</div>
+          <div id="workflow-empty" style="display:none;padding:12px 0;font-size:12px;color:var(--text-muted)">No ad-hoc tasks scheduled.</div>
+        </div>
+
+        <!-- Automation Modals -->
+        <div id="automation-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:1000;align-items:center;justify-content:center">
+          <div class="card" style="width:min(420px,90vw);padding:20px">
+            <div class="card-title" id="automation-modal-title">Edit Automation</div>
+            <input type="hidden" id="automation-modal-id" />
+            <div class="form-group">
+              <label class="form-label">Name</label>
+              <input class="form-input" id="automation-modal-name" placeholder="Morning Briefing" />
+            </div>
+            <div class="form-group">
+              <label class="form-label">Cron Expression</label>
+              <input class="form-input mono" id="automation-modal-cron" placeholder="0 8 * * *" />
+              <div style="font-size:11px;color:var(--text-muted);margin-top:4px">
+                Examples: <code>0 8 * * *</code> = 8am daily &nbsp;|&nbsp; <code>0 18 * * 0</code> = Sunday 6pm &nbsp;|&nbsp; <code>0 20 * * 1-5</code> = weekdays 8pm
+              </div>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Prompt</label>
+              <textarea class="form-input" id="automation-modal-prompt" rows="4" style="font-size:12px;resize:vertical"></textarea>
+            </div>
+            <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px">
+              <button class="btn btn-sm" onclick="closeAutomationModal()">Cancel</button>
+              <button class="btn btn-primary btn-sm" onclick="saveAutomationModal()">Save</button>
+            </div>
           </div>
         </div>
-        <div id="workflow-list"></div>
-        <div id="workflow-loading" class="chat-thinking" style="padding:20px 0;display:none">Loading...</div>
-        <div id="workflow-empty" style="display:none" class="placeholder-box">
-          <div class="placeholder-icon">&#9881;</div>
-          <div class="placeholder-title">No scheduled tasks</div>
-          <div class="placeholder-desc">Schedule recurring tasks using cron expressions.</div>
+
+        <div id="new-automation-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:1000;align-items:center;justify-content:center">
+          <div class="card" style="width:min(420px,90vw);padding:20px">
+            <div class="card-title">New Custom Automation</div>
+            <div class="form-group">
+              <label class="form-label">Name</label>
+              <input class="form-input" id="new-auto-name" placeholder="My Custom Task" />
+            </div>
+            <div class="form-group">
+              <label class="form-label">Cron Expression</label>
+              <input class="form-input mono" id="new-auto-cron" placeholder="0 9 * * *" />
+            </div>
+            <div class="form-group">
+              <label class="form-label">Prompt (what to ask Claude)</label>
+              <textarea class="form-input" id="new-auto-prompt" rows="4" placeholder="Read life/goals/_kernel/key.md and..." style="resize:vertical"></textarea>
+            </div>
+            <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px">
+              <button class="btn btn-sm" onclick="closeNewAutomationModal()">Cancel</button>
+              <button class="btn btn-primary btn-sm" onclick="createCustomAutomation()">Create</button>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -818,65 +872,6 @@ textarea.form-input { resize: vertical; min-height: 70px; }
             </label>
           </div>
           <div id="verbosity-status" style="font-size:11px;color:var(--text-dim);margin-top:6px"></div>
-        </div>
-
-        <!-- Automations -->
-        <div class="card" style="margin-bottom:14px">
-          <div class="card-title" style="display:flex;align-items:center;justify-content:space-between">
-            <span>&#9200; AUTOMATIONS</span>
-            <button class="btn btn-primary btn-sm" onclick="showNewAutomationModal()">+ New</button>
-          </div>
-          <div id="automations-list"><div class="chat-thinking" style="padding:12px 0">Loading automations...</div></div>
-        </div>
-
-        <!-- Automations: Edit Schedule Modal -->
-        <div id="automation-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:1000;align-items:center;justify-content:center">
-          <div class="card" style="width:min(420px,90vw);padding:20px">
-            <div class="card-title" id="automation-modal-title">Edit Automation</div>
-            <input type="hidden" id="automation-modal-id" />
-            <div class="form-group">
-              <label class="form-label">Name</label>
-              <input class="form-input" id="automation-modal-name" placeholder="Morning Briefing" />
-            </div>
-            <div class="form-group">
-              <label class="form-label">Cron Expression</label>
-              <input class="form-input mono" id="automation-modal-cron" placeholder="0 8 * * *" />
-              <div style="font-size:11px;color:var(--text-muted);margin-top:4px">
-                Examples: <code>0 8 * * *</code> = 8am daily &nbsp;|&nbsp; <code>0 18 * * 0</code> = Sunday 6pm &nbsp;|&nbsp; <code>0 20 * * 1-5</code> = weekdays 8pm
-              </div>
-            </div>
-            <div class="form-group">
-              <label class="form-label">Prompt</label>
-              <textarea class="form-input" id="automation-modal-prompt" rows="4" style="font-size:12px;resize:vertical"></textarea>
-            </div>
-            <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px">
-              <button class="btn btn-sm" onclick="closeAutomationModal()">Cancel</button>
-              <button class="btn btn-primary btn-sm" onclick="saveAutomationModal()">Save</button>
-            </div>
-          </div>
-        </div>
-
-        <!-- Automations: New Custom Modal -->
-        <div id="new-automation-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:1000;align-items:center;justify-content:center">
-          <div class="card" style="width:min(420px,90vw);padding:20px">
-            <div class="card-title">New Custom Automation</div>
-            <div class="form-group">
-              <label class="form-label">Name</label>
-              <input class="form-input" id="new-auto-name" placeholder="My Custom Task" />
-            </div>
-            <div class="form-group">
-              <label class="form-label">Cron Expression</label>
-              <input class="form-input mono" id="new-auto-cron" placeholder="0 9 * * *" />
-            </div>
-            <div class="form-group">
-              <label class="form-label">Prompt (what to ask Claude)</label>
-              <textarea class="form-input" id="new-auto-prompt" rows="4" placeholder="Read life/goals/_kernel/key.md and..." style="resize:vertical"></textarea>
-            </div>
-            <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px">
-              <button class="btn btn-sm" onclick="closeNewAutomationModal()">Cancel</button>
-              <button class="btn btn-primary btn-sm" onclick="createCustomAutomation()">Create</button>
-            </div>
-          </div>
         </div>
 
         <!-- Secrets Manager -->
@@ -1275,7 +1270,7 @@ const PAGE_TITLES = {
   memory: 'Memory Palace',
   mission: 'Mission Control',
   agents: 'Agent Hub',
-  workflow: 'Workflow Engine',
+  workflow: 'Automation',
   plugins: 'Skills & MCP',
   vitals: 'System Vitals',
   journal: 'Daily Journal',
@@ -1300,14 +1295,14 @@ function navigate(page) {
     case 'memory':   loadMemories(); loadMemTopics(); break;
     case 'mission':  loadMissions(); break;
     case 'agents':   loadAgents(); break;
-    case 'workflow': loadWorkflow(); break;
+    case 'workflow': loadAutomations(); loadWorkflow(); break;
     case 'plugins':  loadSkills(); loadMcpServers(); break;
     case 'vitals':   loadVitals(); loadTokens(); loadVersions(); break;
     case 'journal':  loadJournal(); break;
     case 'dashboards': loadDashboardServices(); break;
     case 'files': loadFileExplorer(); break;
     case 'activity': loadAuditLog(); loadHiveMind(); break;
-    case 'settings': loadSettings(); loadSecrets(); loadIdentity(); loadProfileEditor('me'); loadImportSources(); loadPersonality(); loadVerbosity(); loadAutomations(); break;
+    case 'settings': loadSettings(); loadSecrets(); loadIdentity(); loadProfileEditor('me'); loadImportSources(); loadPersonality(); loadVerbosity(); break;
   }
 }
 
