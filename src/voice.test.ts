@@ -11,6 +11,7 @@ vi.mock('./logger.js', () => ({
 
 import { voiceCapabilities, synthesizeSpeechLocal, UPLOADS_DIR } from './voice.js';
 import { readEnvFile } from './env.js';
+import { USER_DATA_DIR } from './paths.js';
 
 const mockReadEnvFile = vi.mocked(readEnvFile);
 const isMac = process.platform === 'darwin';
@@ -90,7 +91,7 @@ describe('UPLOADS_DIR', () => {
     expect(path.isAbsolute(UPLOADS_DIR)).toBe(true);
   });
 
-  it('ends with uploads inside user data dir', () => {
-    expect(UPLOADS_DIR).toMatch(/uploads$/);
+  it('is USER_DATA_DIR/uploads', () => {
+    expect(UPLOADS_DIR).toBe(path.join(USER_DATA_DIR, 'uploads'));
   });
 });

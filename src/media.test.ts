@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import path from 'path';
 import fs from 'fs';
 import { buildPhotoMessage, buildDocumentMessage, cleanupOldUploads, UPLOADS_DIR } from './media.js';
+import { USER_DATA_DIR } from './paths.js';
 
 describe('buildPhotoMessage', () => {
   it('returns string containing the file path', () => {
@@ -95,7 +96,7 @@ describe('UPLOADS_DIR', () => {
     expect(path.isAbsolute(UPLOADS_DIR)).toBe(true);
   });
 
-  it('ends with uploads inside user data dir', () => {
-    expect(UPLOADS_DIR).toMatch(/uploads$/);
+  it('is USER_DATA_DIR/uploads', () => {
+    expect(UPLOADS_DIR).toBe(path.join(USER_DATA_DIR, 'uploads'));
   });
 });
