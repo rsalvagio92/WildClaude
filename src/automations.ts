@@ -54,6 +54,77 @@ export const DEFAULT_AUTOMATIONS: AutomationDef[] = [
     cron: '0 18 * * 0',
     description: 'Revisione settimanale domenica alle 18',
   },
+  {
+    id: 'nightly-self-review',
+    name: 'Nightly Self-Review',
+    prompt: `You are the WildClaude self-improvement agent. Analyze yesterday's changes and find bugs, misunderstandings, or inefficiencies.
+
+## Steps
+
+### 1. Review yesterday's commits
+Execute: \`git log --since='yesterday 00:00' --until='today 00:00' --oneline --all\`
+
+If no commits yesterday, stop and report "No commits yesterday".
+
+For each commit, examine: \`git show <hash>\`
+
+### 2. Categorize findings
+
+**CODE_FIX** — buggy or broken code:
+- Logic errors, async failures, missing null checks
+- Security issues (unvalidated input, exposed paths, missing auth)
+- TypeScript errors or runtime crash patterns
+- Repeated error patterns
+- Missing error handling at boundaries
+
+**LESSON_LEARNED** — process issues (NOT code):
+- Misunderstandings of intent
+- Wrong assumptions
+- Suboptimal workflow choices
+- Communication patterns that failed
+- Things that worked well (repeat these)
+
+### 3. For CODE_FIX items
+
+Apply fixes directly to repo files. Keep changes minimal — no refactoring.
+
+Run: \`npx tsc --noEmit\` (ignore *.test.ts pre-existing errors)
+
+Commit: \`fix(self-review YYYY-MM-DD): <description>\`
+
+### 4. For LESSON_LEARNED items
+
+Append to \`~/.wild-claude-pi/lessons-learned.md\` (create if missing):
+
+\`\`\`
+## YYYY-MM-DD
+- **[category]** What happened. Why wrong. What to do differently.
+\`\`\`
+
+Commit lessons separately or with code fixes.
+
+### 5. Push all commits
+
+\`git push origin master\`
+
+### 6. Summary
+
+Report:
+- N commits reviewed
+- N CODE_FIX items applied
+- N LESSON_LEARNED items saved
+- Key findings (2-3 bullets)
+
+## Important
+
+- Only touch files related to findings — no speculative improvements
+- Fix bugs only, do not add features
+- If risky/unclear, document as LESSON_LEARNED instead of code fix
+- Lessons go to ~/.wild-claude-pi/, NEVER to docs/ in the repo
+`,
+    cron: '0 2 * * *',
+    description: 'Nightly self-review alle 02:00 (analizza commit e applica fix)',
+  },
 ];
 
 /**
