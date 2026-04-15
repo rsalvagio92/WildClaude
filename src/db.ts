@@ -1190,6 +1190,10 @@ export function updateScheduledTaskPrompt(id: string, prompt: string): void {
   getDb().prepare('UPDATE scheduled_tasks SET prompt = ? WHERE id = ?').run(prompt, id);
 }
 
+export function updateScheduledTaskSchedule(id: string, schedule: string, nextRun: number): void {
+  getDb().prepare('UPDATE scheduled_tasks SET schedule = ?, next_run = ? WHERE id = ?').run(schedule, nextRun, id);
+}
+
 export function deleteScheduledTask(id: string): void {
   getDb().prepare('DELETE FROM scheduled_tasks WHERE id = ?').run(id);
 }
