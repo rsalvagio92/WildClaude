@@ -106,9 +106,12 @@ export function syncAutomations(agentId = 'main'): void {
         logger.info({ id: def.id }, 'Automation prompt updated from user config');
       }
       if (userOverride.cron) {
-        const nextRun = computeNextRun(userOverride.cron);
-        updateScheduledTaskSchedule(def.id, userOverride.cron, nextRun);
-        logger.info({ id: def.id, cron: userOverride.cron }, 'Automation schedule updated from user config');
+        const existing = existingById.get(def.id)!;
+        if (existing.schedule !== userOverride.cron) {
+          const nextRun = computeNextRun(userOverride.cron);
+          updateScheduledTaskSchedule(def.id, userOverride.cron, nextRun);
+          logger.info({ id: def.id, cron: userOverride.cron }, 'Automation schedule updated from user config');
+        }
       }
     }
 
