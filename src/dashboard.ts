@@ -1420,7 +1420,8 @@ export function startDashboard(botApi?: Api<RawApi>): void {
         const branchOut = cp.execSync(`git -C "${PROJECT_ROOT}" for-each-ref --format="%(refname:short)" refs/remotes/origin`, { timeout: 3000 }).toString().trim();
         branches = branchOut.split('\n')
           .map((b) => b.trim().replace(/^"|"$/g, ''))
-          .filter((b) => b && !b.endsWith('/HEAD'))
+          // Drop HEAD aliases AND the bare "origin" ref some git versions return.
+          .filter((b) => b && !b.endsWith('/HEAD') && b !== 'origin')
           .map((b) => b.replace(/^origin\//, ''));
         // De-dupe + put currentBranch first
         const set = new Set(branches);
