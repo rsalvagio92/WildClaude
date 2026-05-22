@@ -60,6 +60,17 @@ async function handleInternalSentinel(prompt: string, send: Sender): Promise<voi
     await checkBudgetAndAlert(send);
     return;
   }
+  if (prompt === '__internal:agent_improve:run') {
+    const { runSelfImprovementCycle } = await import('./agent-self-improvement.js');
+    await runSelfImprovementCycle(send);
+    return;
+  }
+  if (prompt === '__internal:cleanup:run') {
+    const { runMaintenanceCleanup } = await import('./maintenance.js');
+    const summary = await runMaintenanceCleanup();
+    await send(`🧹 Cleanup: ${summary}`);
+    return;
+  }
   logger.warn({ prompt }, 'unknown internal sentinel');
 }
 

@@ -192,10 +192,34 @@ Claude vision. Tools: `describe`, `extract_text`, `answer`. Requires `ANTHROPIC_
 HA REST API. Tools: `list_entities`, `get_state`, `call_service`, `turn_on/off`. Set `HOME_ASSISTANT_URL` + `HOME_ASSISTANT_TOKEN`.
 
 ### Gmail ([src/integrations/gmail.ts](../src/integrations/gmail.ts))
-Gmail REST API. Tools: `list_unread`, `read`, `search`, `draft`, `send_draft`. Set `GMAIL_ACCESS_TOKEN`.
+Gmail REST API. Tools: `list_unread`, `read`, `search`, `draft`, `send_draft`. For long-lived use set the OAuth refresh trio (see below); raw `GMAIL_ACCESS_TOKEN` only works for ~1h.
 
 ### Google Calendar ([src/integrations/google-calendar.ts](../src/integrations/google-calendar.ts))
-Tools: `list_events`, `create_event`, `find_free_slot`, `update_event`, `delete_event`. Set `GCAL_ACCESS_TOKEN` (+ optional `GCAL_CALENDAR_ID`, default `primary`).
+Tools: `list_events`, `create_event`, `find_free_slot`, `update_event`, `delete_event`. Same OAuth helper as Gmail (+ optional `GCAL_CALENDAR_ID`, default `primary`).
+
+### Google OAuth refresh ([src/integrations/google-oauth.ts](../src/integrations/google-oauth.ts))
+
+Shared helper that turns a refresh token into a fresh access token (cached in-process, refreshed 60s before expiry). Required for any persistent Gmail / Calendar use.
+
+```
+# .env
+GOOGLE_OAUTH_CLIENT_ID=...
+GOOGLE_OAUTH_CLIENT_SECRET=...
+GMAIL_ACCESS_TOKEN=...   # initial — auto-refreshed thereafter
+GMAIL_REFRESH_TOKEN=...
+GCAL_ACCESS_TOKEN=...
+GCAL_REFRESH_TOKEN=...
+```
+
+To get a refresh token: enable Gmail / Calendar APIs in Google Cloud Console, create an OAuth client (Desktop App), run an offline-access consent flow with scope `https://www.googleapis.com/auth/gmail.modify` and/or `https://www.googleapis.com/auth/calendar`. The refresh token is returned once; store via `/set_secret`.
+
+### Web Search ([src/integrations/web-search.ts](../src/integrations/web-search.ts))
+Lightweight ranked-results search (no DOM parsing). Tools: `search`, `news`. Set `BRAVE_API_KEY` (preferred — 2k/mo free tier) or `TAVILY_API_KEY`.
+
+```json
+// .mcp.json
+"web_search": { "command": "node", "args": ["dist/integrations/web-search.js"] }
+```
 
 ### Computer Use ([src/tools/computer-use-mcp.ts](../src/tools/computer-use-mcp.ts))
 Desktop control. Tools: `screenshot`, `click`, `type`, `key`, `move`. **DISABLED by default.** To enable:
@@ -252,7 +276,7 @@ ElevenLabs streaming TTS scaffold. Gated by `VOICE_STREAMING_ENABLED=true`. Sent
 
 ## Auto-cron schedule
 
-Sentinel prompts (`__internal:*`) dispatched by `scheduler.handleInternalSentinel` without LLM calls:
+Sentinel prompts (`__internal:*`) dispatched by `scheduler.handleInternalSentinel`:
 
 | Time | Task |
 |---|---|
@@ -260,6 +284,8 @@ Sentinel prompts (`__internal:*`) dispatched by `scheduler.handleInternalSentine
 | 09:00 daily | `__internal:budget:check` — cost budget alert if 80%/100% crossed |
 | 23:00 daily | `__internal:digest:day` — period rollup |
 | Sun 19:00 | `__internal:reflect:week` — Haiku reflection over last 7d |
+| Mon 03:30 | `__internal:cleanup:run` — prune old sandboxes / proposals / uploads / exports |
+| Mon 04:00 | `__internal:agent_improve:run` — scan failing agents, propose Opus revisions |
 
 To disable any of them: `/automations` in Telegram or edit `~/.wild-claude-pi/config.json` → `automations.disabled: ["auto-reflect-day", …]`.
 
@@ -292,6 +318,11 @@ To disable any of them: `/automations` in Telegram or edit `~/.wild-claude-pi/co
 | `VOICE_STREAMING_ENABLED` | `false` | Real-time TTS streaming |
 | `ELEVENLABS_MODEL_ID` | `eleven_turbo_v2_5` | TTS model |
 | `FINETUNE_ENABLED` | `false` | Allow submission to Anthropic FT API |
+| `BRAVE_API_KEY` / `TAVILY_API_KEY` | — | Web Search MCP (Brave preferred) |
+| `GOOGLE_OAUTH_CLIENT_ID` / `GOOGLE_OAUTH_CLIENT_SECRET` | — | OAuth refresh for Gmail/Cal |
+| `GMAIL_REFRESH_TOKEN` / `GCAL_REFRESH_TOKEN` | — | Refresh tokens (replace short-lived access tokens) |
+| `DEBATE_MAX_ROUNDS` | `4` | Hard cap on `/debate` rounds |
+| `DEBATE_MAX_PER_HOUR` | `3` | Rate limit for `/debate` per chat |
 
 ---
 

@@ -15,20 +15,14 @@
  */
 
 import { serveStdio } from '../tools/mcp-stdio.js';
-import { readEnvFile } from '../env.js';
-
-function token(): string {
-  const s = readEnvFile(['GCAL_ACCESS_TOKEN']);
-  return process.env.GCAL_ACCESS_TOKEN || s.GCAL_ACCESS_TOKEN || '';
-}
+import { getGoogleAccessToken } from './google-oauth.js';
 
 function calendarId(): string {
   return process.env.GCAL_CALENDAR_ID || 'primary';
 }
 
 async function gapi(method: 'GET' | 'POST' | 'PATCH' | 'DELETE', path: string, body?: unknown): Promise<unknown> {
-  const t = token();
-  if (!t) throw new Error('GCal not configured. Set GCAL_ACCESS_TOKEN.');
+  const t = await getGoogleAccessToken('gcal');
   const res = await fetch(`https://www.googleapis.com/calendar/v3${path}`, {
     method,
     headers: { Authorization: `Bearer ${t}`, 'Content-Type': 'application/json' },

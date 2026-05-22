@@ -505,8 +505,18 @@ export async function handleMessage(ctx: Context, message: string, forceVoiceRep
   // Fetch session first: if resuming, the model already has the system prompt in context.
   const sessionId = getSession(chatIdStr, AGENT_ID);
 
-  // Build memory context and prepend to message
-  const { contextText: memCtx, surfacedMemoryIds, surfacedMemorySummaries } = await buildMemoryContext(chatIdStr, message, AGENT_ID);
+  // ── Early routing: lets us skip expensive memory injection for SIMPLE tier ──
+  // Acks, slash commands, "thanks", etc. don't benefit from 20 lines of memory
+  // context — and we burn ~800 tokens per turn injecting them. Classify once.
+  const manualOverrideEarly = chatModelOverride.get(chatIdStr) ?? agentDefaultModel;
+  const routing: RoutingResult = await classifyMessage(message, manualOverrideEarly);
+  const skipMemoryInjection = routing.tier === 'SIMPLE' && !manualOverrideEarly;
+
+  // Build memory context and prepend to message (parallelized + tier-aware)
+  const memCtxPromise = skipMemoryInjection
+    ? Promise.resolve({ contextText: '', surfacedMemoryIds: [] as number[], surfacedMemorySummaries: new Map<number, string>() })
+    : buildMemoryContext(chatIdStr, message, AGENT_ID);
+  const { contextText: memCtx, surfacedMemoryIds, surfacedMemorySummaries } = await memCtxPromise;
   const effectiveSystemPrompt = AGENT_ID === 'main' ? buildFullSystemPrompt() : agentSystemPrompt;
   const parts: string[] = [];
   // Inject system prompt on new sessions; on resumed sessions, still inject
@@ -650,9 +660,8 @@ export async function handleMessage(ctx: Context, message: string, forceVoiceRep
       }
     } : undefined;
 
-    // Multi-model routing: classify message complexity and pick the right model
-    const manualOverride = chatModelOverride.get(chatIdStr) ?? agentDefaultModel;
-    const routing: RoutingResult = await classifyMessage(message, manualOverride);
+    // Routing already done above (before memory context) — reuse it.
+    const manualOverride = manualOverrideEarly;
 
     // Immediate ACK: send a placeholder so the user knows the task was picked up.
     // For streaming, this becomes the live-edited message. For non-streaming, it
@@ -665,9 +674,14 @@ export async function handleMessage(ctx: Context, message: string, forceVoiceRep
       } catch { /* best effort */ }
     }
 
-    // Build personality prompt for --append-system-prompt (ensures personality
-    // is always active, even on resumed sessions where it's not in the message)
+    // Build personality + mood prompt for --append-system-prompt.
+    // Personality stays user-defined; mood is appended as a time/context modifier.
     const personalitySystemPrompt = generatePersonalityPrompt(loadPersonalityConfig());
+    const { getCurrentMood } = await import('./moods.js');
+    const moodInfo = getCurrentMood();
+    const appendedPrompt = [personalitySystemPrompt, moodInfo.snippet]
+      .filter((s) => s && s.trim().length > 0)
+      .join('\n\n');
 
     const result = await runAgent(
       fullMessage,
@@ -677,7 +691,7 @@ export async function handleMessage(ctx: Context, message: string, forceVoiceRep
       routing.model,
       abortCtrl,
       onStreamText,
-      personalitySystemPrompt || undefined,
+      appendedPrompt || undefined,
     );
 
     clearTimeout(timeoutId);
@@ -758,13 +772,36 @@ export async function handleMessage(ctx: Context, message: string, forceVoiceRep
     // Send text response (if there's any left after stripping markers)
     if (responseText) {
       if (shouldSpeakBack) {
-        try {
-          const audioBuffer = await synthesizeSpeech(responseText);
-          await ctx.replyWithVoice(new InputFile(audioBuffer, 'response.ogg'));
-        } catch (ttsErr) {
-          logger.error({ err: ttsErr }, 'TTS failed, falling back to text');
-          for (const part of splitMessage(formatForTelegram(responseText))) {
-            await ctx.reply(part, { parse_mode: 'HTML' });
+        const { voiceStreamingAvailable, speakStreamed } = await import('./voice-streaming.js');
+        if (voiceStreamingAvailable()) {
+          // Streamed mode: split into sentences, synthesize in parallel, send progressively.
+          // Perceived latency on a 3-paragraph response drops from "5s of TTS" to "~1s for first sentence".
+          try {
+            async function* singleEmit(text: string) { yield text; }
+            for await (const chunk of speakStreamed(singleEmit(responseText))) {
+              await ctx.replyWithVoice(new InputFile(chunk.audio, `response-${chunk.sentenceIndex}.mp3`));
+            }
+          } catch (ttsErr) {
+            logger.error({ err: ttsErr }, 'streamed TTS failed, falling back to batch');
+            try {
+              const audioBuffer = await synthesizeSpeech(responseText);
+              await ctx.replyWithVoice(new InputFile(audioBuffer, 'response.ogg'));
+            } catch (fallbackErr) {
+              logger.error({ err: fallbackErr }, 'batch TTS also failed, falling back to text');
+              for (const part of splitMessage(formatForTelegram(responseText))) {
+                await ctx.reply(part, { parse_mode: 'HTML' });
+              }
+            }
+          }
+        } else {
+          try {
+            const audioBuffer = await synthesizeSpeech(responseText);
+            await ctx.replyWithVoice(new InputFile(audioBuffer, 'response.ogg'));
+          } catch (ttsErr) {
+            logger.error({ err: ttsErr }, 'TTS failed, falling back to text');
+            for (const part of splitMessage(formatForTelegram(responseText))) {
+              await ctx.reply(part, { parse_mode: 'HTML' });
+            }
           }
         }
       } else {
@@ -918,10 +955,38 @@ export function createBot(): Bot {
       }
     });
 
-    // Auto-skill synthesis proposals → Telegram
+    // Auto-skill synthesis proposals → Telegram (with inline keyboard).
+    // The notifier itself only knows about a "send text" callback, but we can
+    // intercept by listening to the synthesisEvents bus directly for the hash.
     attachProposalNotifier((text) => {
       bot.api.sendMessage(ALLOWED_CHAT_ID, text, { parse_mode: 'HTML' }).catch(() => {});
     });
+    // Additionally: when a proposal event fires, also send a tiny follow-up
+    // message with inline buttons (mobile-friendly).
+    (async () => {
+      const { synthesisEvents, promoteProposal, discardProposal } = await import('./skill-synthesis.js');
+      const { InlineKeyboard } = await import('grammy');
+      synthesisEvents.onProposal((p) => {
+        const kb = new InlineKeyboard()
+          .text('✅ Accept', `skill:accept:${p.hash}`)
+          .text('❌ Reject', `skill:reject:${p.hash}`);
+        bot.api.sendMessage(ALLOWED_CHAT_ID, `Quick decision for <b>${p.proposedName}</b>:`, { parse_mode: 'HTML', reply_markup: kb }).catch(() => {});
+      });
+      // Wire the callback_query handler ONCE (idempotent — uses bot.callbackQuery).
+      bot.callbackQuery(/^skill:(accept|reject):(.+)$/, async (cqCtx) => {
+        const m = cqCtx.match;
+        const action = m[1]; const hash = m[2];
+        if (action === 'accept') {
+          const r = promoteProposal(hash);
+          await cqCtx.answerCallbackQuery(r.ok ? `Accepted${r.reason ? ` (${r.reason})` : ''}` : `Failed: ${r.reason}`);
+        } else {
+          discardProposal(hash);
+          await cqCtx.answerCallbackQuery('Discarded.');
+        }
+        // Edit the original message to reflect the decision and drop the buttons
+        try { await cqCtx.editMessageReplyMarkup({ reply_markup: undefined }); } catch { /* */ }
+      });
+    })().catch((err) => logger.warn({ err }, 'failed to wire inline keyboard for skill proposals'));
   }
 
   // Register commands in the Telegram menu (built-in + auto-discovered skills)

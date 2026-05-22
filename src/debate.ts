@@ -18,6 +18,20 @@ export interface DebateOptions {
   model?: string;
 }
 
+/** Cap rounds × agents to avoid runaway cost. */
+const MAX_ROUNDS = parseInt(process.env.DEBATE_MAX_ROUNDS ?? '4', 10);
+/** Max debates per hour per chat. */
+const MAX_DEBATES_PER_HOUR = parseInt(process.env.DEBATE_MAX_PER_HOUR ?? '3', 10);
+const debateTimestamps: number[] = [];
+function checkDebateRate(): void {
+  const now = Date.now();
+  while (debateTimestamps.length > 0 && now - debateTimestamps[0] > 3_600_000) debateTimestamps.shift();
+  if (debateTimestamps.length >= MAX_DEBATES_PER_HOUR) {
+    throw new Error(`Rate limit: max ${MAX_DEBATES_PER_HOUR} debates/hour`);
+  }
+  debateTimestamps.push(now);
+}
+
 export interface DebateMessage {
   agent: string;
   round: number;
@@ -45,7 +59,8 @@ export async function runDebate(
   opts: DebateOptions,
   onMessage?: (msg: DebateMessage) => void,
 ): Promise<DebateResult> {
-  const rounds = opts.rounds ?? 3;
+  checkDebateRate();
+  const rounds = Math.min(opts.rounds ?? 3, MAX_ROUNDS);
   const messages: DebateMessage[] = [];
 
   for (let r = 1; r <= rounds; r++) {

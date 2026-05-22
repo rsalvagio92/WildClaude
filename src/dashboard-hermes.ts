@@ -53,6 +53,7 @@ import { listLiveSandboxes, listRecentSandboxes } from './sandbox/registry.js';
 import { RECOMMENDED_SKILLS } from './recommended-skills.js';
 import { getStats as getJuiceStats } from './token-juice.js';
 import { getBudgetStatus } from './cost-budget.js';
+import { getAuditLog } from './db.js';
 import { selectTrajectories, estimateCost, convertToJsonl } from './finetune.js';
 import { listPendingProposals as listAgentImprovementProposals, findStrugglingAgents, runSelfImprovementCycle, acceptAgentProposal, discardAgentProposal } from './agent-self-improvement.js';
 import { introspectSemantic } from './memory-blocks.js';
@@ -254,6 +255,15 @@ export function registerHermesRoutes(app: Hono): void {
 
   // ── Budget status ──────────────────────────────────────────────────
   app.get('/api/budget', (c) => c.json(getBudgetStatus()));
+
+  // ── Audit log ──────────────────────────────────────────────────────
+  app.get('/api/audit-log', (c) => {
+    const limit = parseInt(c.req.query('limit') ?? '100', 10);
+    const filterBlocked = c.req.query('blocked') === 'true';
+    let rows = getAuditLog(limit, 0);
+    if (filterBlocked) rows = rows.filter((r) => r.blocked === 1);
+    return c.json({ entries: rows });
+  });
 
   // ── Semantic memory search ─────────────────────────────────────────
   app.get('/api/memory-search', async (c) => {

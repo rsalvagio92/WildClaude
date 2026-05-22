@@ -45,8 +45,11 @@ export async function buildMemoryContext(
   const summaryMap = new Map<number, string>();
   const memLines: string[] = [];
 
-  // Layer 1: FTS5 keyword search (fully local, no external API)
-  const searched = searchMemories(chatId, userMessage, 5, undefined, agentId);
+  // Layer 1+2: parallel keyword + recent-high-importance queries.
+  const [searched, recent] = await Promise.all([
+    Promise.resolve(searchMemories(chatId, userMessage, 5, undefined, agentId)),
+    Promise.resolve(getRecentHighImportanceMemories(chatId, 5)),
+  ]);
   for (const mem of searched) {
     seen.add(mem.id);
     summaryMap.set(mem.id, mem.summary);
@@ -54,9 +57,6 @@ export async function buildMemoryContext(
     const topicStr = topics.length > 0 ? ` (${topics.join(', ')})` : '';
     memLines.push(`- [${mem.importance.toFixed(1)}] ${mem.summary}${topicStr}`);
   }
-
-  // Layer 2: recent high-importance memories (deduplicated)
-  const recent = getRecentHighImportanceMemories(chatId, 5);
   for (const mem of recent) {
     if (seen.has(mem.id)) continue;
     seen.add(mem.id);
@@ -64,6 +64,21 @@ export async function buildMemoryContext(
     const topics = safeParse(mem.topics);
     const topicStr = topics.length > 0 ? ` (${topics.join(', ')})` : '';
     memLines.push(`- [${mem.importance.toFixed(1)}] ${mem.summary}${topicStr}`);
+  }
+
+  // Layer 2.5: Hermes memory_blocks — scoped, editable, optionally semantic.
+  // Don't spawn embedding calls for every turn; use the cheap keyword/LIKE path here.
+  // Semantic search is on /whatdoyouknow + dashboard where it's user-initiated.
+  try {
+    const { searchByText: searchBlocks } = await import('./memory-blocks.js');
+    const blocks = searchBlocks(userMessage, 5);
+    if (blocks.length > 0) {
+      for (const b of blocks.slice(0, 5)) {
+        memLines.push(`- [block #${b.id} ${b.scope}] ${b.topic}: ${b.body.slice(0, 240)}`);
+      }
+    }
+  } catch (err) {
+    // memory_blocks table may not exist on very old installs — silent fallback
   }
 
   // Layer 3: consolidation insights (keyword search, fully local)

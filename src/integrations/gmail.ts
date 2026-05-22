@@ -18,17 +18,11 @@
  */
 
 import { serveStdio } from '../tools/mcp-stdio.js';
-import { readEnvFile } from '../env.js';
 import { juice } from '../token-juice.js';
-
-function token(): string {
-  const s = readEnvFile(['GMAIL_ACCESS_TOKEN']);
-  return process.env.GMAIL_ACCESS_TOKEN || s.GMAIL_ACCESS_TOKEN || '';
-}
+import { getGoogleAccessToken } from './google-oauth.js';
 
 async function gapi(method: 'GET' | 'POST', path: string, body?: unknown): Promise<unknown> {
-  const t = token();
-  if (!t) throw new Error('Gmail not configured. Set GMAIL_ACCESS_TOKEN.');
+  const t = await getGoogleAccessToken('gmail');
   const res = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me${path}`, {
     method,
     headers: { Authorization: `Bearer ${t}`, 'Content-Type': 'application/json' },

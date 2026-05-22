@@ -328,16 +328,18 @@ A self-contained set of modules added in 2026-05 that move WildClaude from "pers
 - **Debate** ([src/debate.ts](src/debate.ts)) — N-round structured debate between two agents + Haiku synthesis.
 - **Reflection** ([src/reflection.ts](src/reflection.ts)) — daily/weekly Haiku-drafted pattern surfacing from conversation_log + memories + tool_sequences + mission_tasks.
 - **Digest** ([src/digest.ts](src/digest.ts)) — SQL rollup of new memories / tasks / runs / cost for a period.
-- **Moods** ([src/moods.ts](src/moods.ts)) — time-aware personality modifiers (focus/work/evening/weekend) layered on top of the personality preset.
+- **Moods** ([src/moods.ts](src/moods.ts)) — time-aware personality modifiers (focus/work/evening/weekend) appended to `--append-system-prompt` in bot.ts alongside the personality preset.
 - **Evals** ([src/evals.ts](src/evals.ts)) — declarative YAML test cases for agent behavior. Contains / not_contains / tools / length assertions. Runs persisted in `eval_runs`.
 
 ### Auto-cron
 
-`automations.ts` ships four `__internal:` sentinel tasks routed through `scheduler.handleInternalSentinel` (no LLM call needed to dispatch):
+`automations.ts` ships six `__internal:` sentinel tasks routed through `scheduler.handleInternalSentinel` (no LLM call needed to dispatch unless the sentinel itself triggers one):
 - 08:30 daily → reflection
 - 09:00 daily → budget check
 - 23:00 daily → digest
 - Sunday 19:00 → weekly reflection
+- Monday 04:00 → agent self-improvement scan
+- Monday 03:30 → maintenance cleanup (sandboxes / proposals / uploads / exports)
 
 ### Auto-skill synthesis
 
@@ -356,8 +358,9 @@ A self-contained set of modules added in 2026-05 that move WildClaude from "pers
 - **Browser** ([src/tools/browser-mcp.ts](src/tools/browser-mcp.ts)) — Playwright wrapper. Host allowlist consent gate via `~/.wild-claude-pi/config.json → browser.allowedHosts` or `BROWSER_ALLOW_ALL=true`.
 - **Vision** ([src/tools/vision-mcp.ts](src/tools/vision-mcp.ts)) — Claude vision (describe / extract_text / answer). Requires `ANTHROPIC_API_KEY`.
 - **Home Assistant** ([src/integrations/home-assistant.ts](src/integrations/home-assistant.ts)) — HA REST API (list_entities / get_state / call_service / turn_on/off).
-- **Gmail** ([src/integrations/gmail.ts](src/integrations/gmail.ts)) — REST API (list_unread / read / search / draft / send_draft). Requires `GMAIL_ACCESS_TOKEN`.
-- **Google Calendar** ([src/integrations/google-calendar.ts](src/integrations/google-calendar.ts)) — list/create/find_free_slot/update/delete. Requires `GCAL_ACCESS_TOKEN`.
+- **Gmail** ([src/integrations/gmail.ts](src/integrations/gmail.ts)) — REST API (list_unread / read / search / draft / send_draft). Uses [google-oauth.ts](src/integrations/google-oauth.ts) for token refresh; set `GMAIL_REFRESH_TOKEN` + `GOOGLE_OAUTH_CLIENT_ID`/`SECRET`. Falls back to raw `GMAIL_ACCESS_TOKEN` if refresh isn't configured.
+- **Google Calendar** ([src/integrations/google-calendar.ts](src/integrations/google-calendar.ts)) — list/create/find_free_slot/update/delete. Same OAuth helper (`GCAL_REFRESH_TOKEN`).
+- **Web Search** ([src/integrations/web-search.ts](src/integrations/web-search.ts)) — Brave or Tavily REST. Tools: `search`, `news`. Set `BRAVE_API_KEY` (preferred) or `TAVILY_API_KEY`. Much lighter than browser MCP for "what is X" queries.
 - **Computer Use** ([src/tools/computer-use-mcp.ts](src/tools/computer-use-mcp.ts)) — screenshot / click / type / key / move. `COMPUTER_USE_ENABLED=false` by default. Honors `COMPUTER_USE_DRY_RUN=true`. Rate-limited; every action audited to `USER_DATA_DIR/computer-use.audit.jsonl`.
 
 ### Interop & ecosystem
@@ -369,6 +372,20 @@ A self-contained set of modules added in 2026-05 that move WildClaude from "pers
 - **Plugin SDK** ([src/sdk/index.ts](src/sdk/index.ts)) — public type exports for third-party plugin authors.
 - **Litestream sync** ([src/sync/litestream.ts](src/sync/litestream.ts)) — generates `litestream.yml` for S3-backed SQLite replication across devices.
 - **Real-time voice streaming** ([src/voice-streaming.ts](src/voice-streaming.ts)) — ElevenLabs streaming TTS scaffold gated by `VOICE_STREAMING_ENABLED=true`. Sentence splitter + async-iterable bridge for `runAgent.onStreamText`.
+
+### Chat efficiency
+
+Three things bot.ts does to keep the token bill predictable:
+
+1. **Early routing** — `classifyMessage` runs BEFORE `buildMemoryContext`. SIMPLE-tier messages (greetings, acks, slash commands, sub-20-char messages) skip the entire memory injection block, saving ~800 tokens per turn.
+2. **Parallel memory queries** — `buildMemoryContext` runs FTS5 + recent-high-importance in `Promise.all`.
+3. **Hermes memory_blocks** are injected via cheap `searchByText` (LIKE matching) in the chat path. Semantic search (cosine similarity over Gemini embeddings) is reserved for `/whatdoyouknow` and the dashboard where it's user-initiated — never on a hot path.
+
+Soft-throttle: if the monthly budget is exceeded, the router downgrades all classification results to SIMPLE → Haiku for the rest of the month. See `src/cost-budget.ts → shouldDowngradeForBudget`.
+
+### Inline keyboards
+
+Skill-synthesis proposals get a follow-up Telegram message with `✅ Accept` / `❌ Reject` inline buttons next to the text message (mobile-friendly). Slash commands `/skill_accept <hash>` / `/skill_reject <hash>` still work too. The `callback_query` handler is in [bot.ts](src/bot.ts) right after `attachProposalNotifier`.
 
 For activation flags and config keys, see [docs/HERMES.md](docs/HERMES.md).
 

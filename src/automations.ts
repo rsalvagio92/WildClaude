@@ -83,6 +83,20 @@ export const DEFAULT_AUTOMATIONS: AutomationDef[] = [
     cron: '0 9 * * *',
     description: 'Controlla budget mensile alle 09 ogni giorno',
   },
+  {
+    id: 'auto-agent-improve',
+    name: 'Agent self-improvement scan (weekly)',
+    prompt: '__internal:agent_improve:run',
+    cron: '0 4 * * 1',
+    description: 'Scan settimanale agenti in difficoltà, lunedì alle 04',
+  },
+  {
+    id: 'auto-cleanup',
+    name: 'Cleanup proposals/sandboxes/uploads (weekly)',
+    prompt: '__internal:cleanup:run',
+    cron: '30 3 * * 1',
+    description: 'Pulizia file vecchi, lunedì alle 03:30',
+  },
 ];
 
 /**

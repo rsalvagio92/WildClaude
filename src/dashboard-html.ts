@@ -409,6 +409,10 @@ textarea.form-input { resize: vertical; min-height: 70px; }
         <span class="nav-icon">&#129514;</span>
         <span class="nav-label">Hermes Lab</span>
       </div>
+      <div class="nav-item" data-page="audit" onclick="navigate('audit')">
+        <span class="nav-icon">&#128274;</span>
+        <span class="nav-label">Audit Log</span>
+      </div>
       <div class="nav-item" data-page="settings" onclick="navigate('settings')">
         <span class="nav-icon">&#9881;</span><span class="nav-label">Settings</span>
       </div>
@@ -990,6 +994,31 @@ textarea.form-input { resize: vertical; min-height: 70px; }
         </div>
       </div>
 
+      <!-- Audit Log -->
+      <div class="page" id="page-audit">
+        <div class="section-heading">&#128274; Audit Log</div>
+        <p class="hint" style="margin-bottom:14px;color:var(--text-muted)">
+          Eventi di sicurezza e azioni autorizzate / bloccate dalla tabella <code>audit_log</code>. Le righe con bandiera "blocked" sono tentativi rifiutati (PIN errato, lock, kill-phrase, etc.).
+        </p>
+
+        <div class="card" style="margin-bottom:14px">
+          <div class="card-title" style="display:flex;justify-content:space-between;align-items:center">
+            <span>FILTRO</span>
+            <div style="display:flex;gap:6px">
+              <label style="font-size:12px;display:flex;align-items:center;gap:4px"><input type="checkbox" id="audit-blocked-only" onchange="loadAuditPage()"> Solo bloccati</label>
+              <button class="btn btn-ghost btn-sm" onclick="loadAuditPage()">Refresh</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-title">EVENTI RECENTI</div>
+          <div id="audit-content" style="max-height:600px;overflow-y:auto">
+            <div class="chat-thinking" style="padding:8px 0">Loading...</div>
+          </div>
+        </div>
+      </div>
+
       <!-- Page 11: Settings -->
       <div class="page" id="page-settings">
         <div class="section-heading">&#9881; Settings</div>
@@ -1533,6 +1562,7 @@ const PAGE_TITLES = {
   reflection: 'Reflection & Digest',
   marketplace: 'Skill Marketplace',
   'hermes-lab': 'Hermes Lab',
+  audit: 'Audit Log',
   settings: 'Settings'
 };
 
@@ -1564,6 +1594,7 @@ function navigate(page) {
     case 'reflection': loadReflections(); break;
     case 'marketplace': loadTokenJuice(); loadCuratedSkills(); break;
     case 'hermes-lab': loadHermesLab(); break;
+    case 'audit': loadAuditPage(); break;
     case 'settings': loadSettings(); loadSecrets(); loadIdentity(); loadProfileEditor('me'); loadImportSources(); loadPersonality(); loadVerbosity(); break;
   }
 }
@@ -4596,6 +4627,35 @@ async function loadCuratedSkills() {
     ).join('');
   } catch (err) {
     el.innerHTML = '<div style="color:var(--text-muted)">Failed to load curated list.</div>';
+  }
+}
+
+// ─────────────────────────────────────────────
+// Audit Log
+// ─────────────────────────────────────────────
+async function loadAuditPage() {
+  const el = document.getElementById('audit-content');
+  const blockedOnly = document.getElementById('audit-blocked-only')?.checked === true;
+  try {
+    const data = await apiFetch('/api/audit-log?limit=200' + (blockedOnly ? '&blocked=true' : ''));
+    const rows = data.entries || [];
+    if (rows.length === 0) {
+      el.innerHTML = '<div style="color:var(--text-muted);padding:8px">Nessun evento.</div>';
+      return;
+    }
+    el.innerHTML = rows.map(r => {
+      const at = new Date(r.created_at * 1000).toLocaleString();
+      const badge = r.blocked === 1 ? '<span class="badge badge-red">BLOCKED</span>' : '<span class="badge badge-green">ok</span>';
+      return '<div style="border-bottom:1px solid var(--border);padding:6px 0;font-size:12px;font-family:monospace">' +
+        '<div style="display:flex;justify-content:space-between">' +
+          '<span>' + badge + ' <b>' + escHtml(r.action) + '</b> · ' + escHtml(r.agent_id || 'main') + ' · ' + escHtml(r.chat_id || '') + '</span>' +
+          '<span style="color:var(--text-dim)">' + escHtml(at) + '</span>' +
+        '</div>' +
+        (r.detail ? '<div style="color:var(--text-muted);margin-top:2px">' + escHtml(String(r.detail).slice(0, 400)) + '</div>' : '') +
+      '</div>';
+    }).join('');
+  } catch (err) {
+    el.innerHTML = '<div style="color:var(--text-muted)">Audit log non disponibile.</div>';
   }
 }
 
