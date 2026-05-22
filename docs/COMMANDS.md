@@ -264,13 +264,46 @@ The page loads a login screen. No token needed in the URL. Set `DASHBOARD_TOKEN`
 2. **Memory Palace** — Search, browse, pin/unpin memories
 3. **Mission Control** — Goals, projects, task management
 4. **Agent Hub** — Agent status, lanes, model badges
-5. **Workflow Engine** — Scheduled tasks, cron management
+5. **Automation** — Scheduled tasks, cron management
 6. **Skills & MCP** — MCP server management, skill browser
 7. **System Vitals** — CPU, RAM, disk, API costs
 8. **Daily Journal** — Auto-generated entries from reviews
 9. **External Dashboards** — Vercel, GitHub, Neon, Supabase, Stripe, Cloudflare, Sentry status panels
-10. **Live Activity** — Real-time event stream
-11. **Settings** — Configuration, status, links; first card is **Personality** (editor, preview, presets)
+10. **File Explorer** — Browse the user-data dir
+11. **Live Activity** — Real-time event stream
+12. **Trace Inspector** — Per-session traces + 30-day cost breakdown
+13. **Evals** — Declarative test cases with one-click runs
+14. **Workflows** — Declarative DAG workflows with step state
+15. **Reflection & Digest** — Generate / browse reflections + period digests
+16. **Skill Marketplace** — TokenJuice stats + curated picks + agentskills.io search
+17. **Hermes Lab** — Budget, semantic memory search, fine-tune estimate, agent self-improvement
+18. **Settings** — Configuration, status, links; first card is **Personality** (editor, preview, presets)
+
+## Hermes Stack commands
+
+See [HERMES.md](HERMES.md) for the full activation guide. Quick reference:
+
+| Command | Description |
+|---------|-------------|
+| `/sandbox` | Sandbox status + prune + docker check + smoke test |
+| `/skill_install <ref>` | Import a skill from a URL or agentskills.io ID |
+| `/skill_confirm` / `/skill_cancel` | Commit / abort a pending import |
+| `/skill_accept <hash>` / `/skill_reject <hash>` | Approve / discard auto-skill proposal |
+| `/whatdoyouknow about <topic>` | Knowledge introspection (semantic + keyword) |
+| `/unlearn <topic>` | Targeted memory deletion |
+| `/evals list\|run <name>\|recent` | Declarative agent eval cases |
+| `/workflow list\|run <name>\|recent` | Declarative DAG workflows |
+| `/debate <agentA> <agentB> <topic> [--rounds N]` | N-round multi-agent debate |
+| `/reflect today\|week\|recent` | Haiku-drafted reflection |
+| `/digest day\|week\|month` | Period rollup |
+| `/mood [set <focus\|work\|evening\|weekend\|neutral>]` | Personality modulation |
+| `/sync status\|init\|configure` | Litestream cross-device sync |
+| `/export trajectories [--since YYYY-MM-DD] [--limit N] [--raw] [--encrypt <pass>]` | JSONL export |
+| `/tokenjuice` | Output compression stats |
+| `/recommended [tag]` | Curated third-party skills |
+| `/budget` | Monthly cost status |
+| `/agent_improve list\|run\|accept\|drop` | Closed-loop agent refinement |
+| `/finetune estimate\|build\|submit` | Trajectory-based fine-tuning |
 
 ## WhatsApp & Slack
 

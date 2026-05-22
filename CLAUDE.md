@@ -304,7 +304,73 @@ User-defined services auto-register their secrets.
 **Stack:** Hono + HTMX + Alpine.js + TailwindCSS
 **Auth:** Login screen on page load. `DASHBOARD_TOKEN` is optional (set via `/set_secret`).
 
-11 modules: Command Center, Memory Palace, Mission Control, Agent Hub, Workflow Engine, Skills & MCP, System Vitals, Daily Journal, External Dashboards, Live Activity, Settings.
+17 modules: Command Center, Memory Palace, Mission Control, Agent Hub, Automation, Skills & MCP, System Vitals, Daily Journal, External Dashboards, File Explorer, Live Activity, Trace Inspector, Evals, Workflows, Reflection & Digest, Skill Marketplace, Hermes Lab, Settings.
+
+## Hermes Stack (advanced layer)
+
+A self-contained set of modules added in 2026-05 that move WildClaude from "personal AI OS" toward "definitive agentic tool". All gated by sensible defaults — nothing changes existing behaviour until you opt in.
+
+### Safety & programmatic execution
+
+- **Sandbox abstraction** ([src/sandbox/](src/sandbox/)) — three backends: `local`, `local-scratch` (filesystem-isolated, default), `docker` (full container, requires `dockerode` + image). Ralph runs inside a sandbox by default.
+- **execute_code MCP** ([src/tools/execute-code-mcp.ts](src/tools/execute-code-mcp.ts)) — single tool that runs a JS snippet calling other tools through a `wc` global. Collapses multi-step plans into one inference. Path-traversal guarded; `process`/`require` not exposed.
+
+### Memory & observability
+
+- **Memory blocks** ([src/memory-blocks.ts](src/memory-blocks.ts)) — Mem0-style scoping (user/session/agent) + Letta-style editable blocks. Semantic search via Gemini text-embedding-004 (cosine ≥ 0.55) with keyword fallback. Multi-modal attachments (image/audio/file) with auto-captioning via Claude vision.
+- **Trace Inspector** ([src/trace-inspector.ts](src/trace-inspector.ts)) — per-session timelines from `conversation_log` + `token_usage`, 30-day cost breakdown by agent. Timestamps normalised to ms at API boundary (legacy tables store seconds).
+- **TokenJuice** ([src/token-juice.ts](src/token-juice.ts)) — output compression layer wired into browser-mcp + vision-mcp + gmail-mcp. HTML→Markdown, URL shortening, dedup, truncate. Tracks bytes-saved + dollar-saved stats.
+- **Cost budget** ([src/cost-budget.ts](src/cost-budget.ts)) — `MONTHLY_BUDGET_USD` env. Alerts at 80% / 100%. `shouldDowngradeForBudget()` makes the router auto-downgrade to Haiku once the cap is hit.
+
+### Workflows, debate, reflection
+
+- **Workflows** ([src/workflows.ts](src/workflows.ts)) — YAML DAGs in `USER_DATA_DIR/workflows/` with cycle detection, topological execution, `{{step.output}}` interpolation, SQLite-checkpointed resumable runs.
+- **Debate** ([src/debate.ts](src/debate.ts)) — N-round structured debate between two agents + Haiku synthesis.
+- **Reflection** ([src/reflection.ts](src/reflection.ts)) — daily/weekly Haiku-drafted pattern surfacing from conversation_log + memories + tool_sequences + mission_tasks.
+- **Digest** ([src/digest.ts](src/digest.ts)) — SQL rollup of new memories / tasks / runs / cost for a period.
+- **Moods** ([src/moods.ts](src/moods.ts)) — time-aware personality modifiers (focus/work/evening/weekend) layered on top of the personality preset.
+- **Evals** ([src/evals.ts](src/evals.ts)) — declarative YAML test cases for agent behavior. Contains / not_contains / tools / length assertions. Runs persisted in `eval_runs`.
+
+### Auto-cron
+
+`automations.ts` ships four `__internal:` sentinel tasks routed through `scheduler.handleInternalSentinel` (no LLM call needed to dispatch):
+- 08:30 daily → reflection
+- 09:00 daily → budget check
+- 23:00 daily → digest
+- Sunday 19:00 → weekly reflection
+
+### Auto-skill synthesis
+
+[src/skill-synthesis.ts](src/skill-synthesis.ts) — canonical, PII-free tool-sequence hashing in `tool_sequences`. When the same sequence shows up 5× in 14 days, Haiku drafts a SKILL.md proposal to `~/.wild-claude-pi/skills/_proposals/` and pings Telegram. `/skill_accept <hash>` promotes; `/skill_reject <hash>` discards.
+
+### Agent self-improvement
+
+[src/agent-self-improvement.ts](src/agent-self-improvement.ts) — weekly cycle finds agents with failure rate ≥30% over 7 days, asks Opus for a conservative revision of the agent definition. Proposals land in `~/.wild-claude-pi/agents/_self-improvement-proposals/` for user approval via `/agent_improve accept`.
+
+### Fine-tuning pipeline
+
+[src/finetune.ts](src/finetune.ts) — trajectory selection + JSONL conversion + cost estimate. Submission gated by `FINETUNE_ENABLED=true` until Anthropic publishes the GA fine-tune spec; pipeline runs end-to-end except for the final API call.
+
+### New MCP servers
+
+- **Browser** ([src/tools/browser-mcp.ts](src/tools/browser-mcp.ts)) — Playwright wrapper. Host allowlist consent gate via `~/.wild-claude-pi/config.json → browser.allowedHosts` or `BROWSER_ALLOW_ALL=true`.
+- **Vision** ([src/tools/vision-mcp.ts](src/tools/vision-mcp.ts)) — Claude vision (describe / extract_text / answer). Requires `ANTHROPIC_API_KEY`.
+- **Home Assistant** ([src/integrations/home-assistant.ts](src/integrations/home-assistant.ts)) — HA REST API (list_entities / get_state / call_service / turn_on/off).
+- **Gmail** ([src/integrations/gmail.ts](src/integrations/gmail.ts)) — REST API (list_unread / read / search / draft / send_draft). Requires `GMAIL_ACCESS_TOKEN`.
+- **Google Calendar** ([src/integrations/google-calendar.ts](src/integrations/google-calendar.ts)) — list/create/find_free_slot/update/delete. Requires `GCAL_ACCESS_TOKEN`.
+- **Computer Use** ([src/tools/computer-use-mcp.ts](src/tools/computer-use-mcp.ts)) — screenshot / click / type / key / move. `COMPUTER_USE_ENABLED=false` by default. Honors `COMPUTER_USE_DRY_RUN=true`. Rate-limited; every action audited to `USER_DATA_DIR/computer-use.audit.jsonl`.
+
+### Interop & ecosystem
+
+- **ACP gateway** ([src/acp/](src/acp/)) — JSON-RPC 2.0 over stdio (Zed/Cursor subprocess) and over WebSocket (`ACP_WS_PORT=3142` + DASHBOARD_TOKEN, for remote IDE plugins). Same handlers, different wire.
+- **Trajectory export** ([src/trajectory-export.ts](src/trajectory-export.ts)) — JSONL with PII scrubbing (emails / phones / API keys / IPs preserving localhost) + chat-id hashing. `--encrypt <pass>` produces AES-256-GCM ciphertext.
+- **Skill import** ([src/skill-import.ts](src/skill-import.ts)) — `/skill_install <name-or-url>` with preview/confirm flow, scriptlet stripping, `source:` annotation.
+- **Recommended skills** ([src/recommended-skills.ts](src/recommended-skills.ts)) — curated picks: book-to-skill, graphify, Skill_Seekers, claude-skills-313. Surfaced in dashboard Marketplace.
+- **Plugin SDK** ([src/sdk/index.ts](src/sdk/index.ts)) — public type exports for third-party plugin authors.
+- **Litestream sync** ([src/sync/litestream.ts](src/sync/litestream.ts)) — generates `litestream.yml` for S3-backed SQLite replication across devices.
+- **Real-time voice streaming** ([src/voice-streaming.ts](src/voice-streaming.ts)) — ElevenLabs streaming TTS scaffold gated by `VOICE_STREAMING_ENABLED=true`. Sentence splitter + async-iterable bridge for `runAgent.onStreamText`.
+
+For activation flags and config keys, see [docs/HERMES.md](docs/HERMES.md).
 
 ## Telegram Commands
 
@@ -347,6 +413,25 @@ User-defined services auto-register their secrets.
 | `/lock` | Lock session |
 | `/status` | Health check |
 | `/dashboard` | Get dashboard link |
+| **Hermes** | |
+| `/sandbox [prune\|docker\|test]` | Sandbox lifecycle + smoke test |
+| `/skill_accept <hash>` / `/skill_reject <hash>` | Approve / discard auto-skill proposal |
+| `/skill_install <ref>` / `/skill_confirm` / `/skill_cancel` | Import a skill from a URL or agentskills.io |
+| `/whatdoyouknow about <topic>` | Knowledge introspection (semantic + keyword) |
+| `/unlearn <topic>` | Targeted memory deletion |
+| `/evals list\|run <name>\|recent` | Run declarative agent eval cases |
+| `/workflow list\|run <name>\|recent` | Run declarative DAG workflows |
+| `/debate <agentA> <agentB> <topic>` | N-round multi-agent debate |
+| `/reflect today\|week\|recent` | Generate Haiku-drafted reflection |
+| `/digest day\|week\|month` | Period rollup |
+| `/mood [set <focus\|work\|evening\|weekend\|neutral>]` | Personality modulation |
+| `/sync status\|init\|configure` | Cross-device sync via Litestream |
+| `/export trajectories [--since YYYY-MM-DD] [--limit N] [--raw] [--encrypt <pass>]` | JSONL export with PII scrub |
+| `/tokenjuice` | Output compression stats |
+| `/recommended [tag]` | Curated third-party skills |
+| `/budget` | Monthly cost status + threshold |
+| `/agent_improve list\|run\|accept\|drop` | Closed-loop agent refinement |
+| `/finetune estimate\|build\|submit` | Trajectory-based fine-tune pipeline |
 
 ## Deployment
 
