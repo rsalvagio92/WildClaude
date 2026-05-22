@@ -76,6 +76,8 @@ const reflectionMod = await import(dist('reflection.js'));
 const digestMod = await import(dist('digest.js'));
 const moodsMod = await import(dist('moods.js'));
 const litestreamMod = await import(dist('sync/litestream.js'));
+const juiceMod = await import(dist('token-juice.js'));
+const recsMod = await import(dist('recommended-skills.js'));
 
 // ── Schema ───────────────────────────────────────────────────────────
 
@@ -652,6 +654,84 @@ await test('buildConfig produces parseable yaml', () => {
   const yamlSrc = litestreamMod.buildConfig({ bucket: 'test-bucket', region: 'auto' });
   assert(yamlSrc.includes('bucket: test-bucket'), 'no bucket: ' + yamlSrc);
   assert(yamlSrc.includes('wild-claude.db'), 'no db path');
+});
+
+// ── Token Juice ──────────────────────────────────────────────────────
+
+section('token-juice');
+
+await test('htmlToMarkdown strips scripts and converts headings', () => {
+  const html = '<html><head><script>alert(1)</script></head><body><h1>Title</h1><p>Hello <a href="https://example.com">world</a></p></body></html>';
+  const out = juiceMod.htmlToMarkdown(html);
+  assert(!out.includes('alert'), 'script not stripped: ' + out);
+  assert(out.includes('Title'), 'heading missing: ' + out);
+  assert(out.includes('[world](https://example.com)') || out.includes('world'), 'anchor: ' + out);
+});
+
+await test('shortenUrls replaces long URLs and returns table', () => {
+  const text = 'See https://very-long-domain.example.com/path/to/something/extremely/long/that/exceeds-max for details';
+  const r = juiceMod.shortenUrls(text, 40);
+  assert(r.text.includes('[link1]'), 'placeholder missing');
+  assert(r.references.length === 1, 'should have 1 ref');
+});
+
+await test('shortenUrls preserves short URLs', () => {
+  const text = 'See https://a.b for details';
+  const r = juiceMod.shortenUrls(text, 60);
+  assert(r.text.includes('https://a.b'), 'short URL was rewritten');
+});
+
+await test('dedupAdjacent collapses repeated lines', () => {
+  const input = 'foo\nfoo\nfoo\nbar\nbar\nbaz';
+  const out = juiceMod.dedupAdjacent(input);
+  assert(out.includes('foo (× 3)'), 'no dedup: ' + out);
+  assert(out.includes('bar (× 2)'), 'no dedup 2: ' + out);
+  assert(out.includes('baz'), 'singleton lost');
+});
+
+await test('truncateMiddle keeps head + tail', () => {
+  const s = 'A'.repeat(100) + 'B'.repeat(100) + 'C'.repeat(100);
+  const out = juiceMod.truncateMiddle(s, 50, 20, 20);
+  assert(out.startsWith('A'.repeat(20)), 'head wrong');
+  assert(out.endsWith('C'.repeat(20)), 'tail wrong');
+  assert(out.includes('snipped'), 'marker missing');
+});
+
+await test('juice() compresses real HTML and reports savings', () => {
+  const fixture = '<html><head><script>foo</script><style>.x{}</style></head><body><h2>Heading</h2><p>Line 1</p><p>Line 1</p><p>Line 1</p><a href="https://example.com/very/long/path/that/should/be/shortened">a</a></body></html>';
+  const r = juiceMod.juice(fixture, { tag: 'test' });
+  assert(r.bytesOut < r.bytesIn, `no compression: ${r.bytesIn} → ${r.bytesOut}`);
+  assert(r.tokensSaved > 0, 'tokensSaved should be > 0');
+});
+
+await test('juice() updates global stats', () => {
+  const before = juiceMod.getStats();
+  juiceMod.juice('foo'.repeat(1000), { tag: 'stats-test' });
+  const after = juiceMod.getStats();
+  assert(after.callsTotal === before.callsTotal + 1, 'callsTotal not incremented');
+  assert(after.bytesIn >= before.bytesIn + 3000, 'bytesIn not tracked');
+});
+
+// ── Recommended skills ───────────────────────────────────────────────
+
+section('recommended-skills');
+
+await test('RECOMMENDED_SKILLS has well-formed entries', () => {
+  const skills = recsMod.RECOMMENDED_SKILLS;
+  assert(Array.isArray(skills) && skills.length >= 3, 'expected >=3 skills');
+  for (const s of skills) {
+    assert(typeof s.id === 'string' && s.id.length > 0, 'id');
+    assert(typeof s.name === 'string', 'name');
+    assert(typeof s.url === 'string' && s.url.startsWith('https://'), 'url');
+    assert(typeof s.install === 'string', 'install');
+    assert(Array.isArray(s.tags), 'tags');
+  }
+});
+
+await test('RECOMMENDED_SKILLS includes book-to-skill and graphify', () => {
+  const ids = recsMod.RECOMMENDED_SKILLS.map((s) => s.id);
+  assert(ids.includes('book-to-skill'), 'no book-to-skill');
+  assert(ids.includes('graphify'), 'no graphify');
 });
 
 // ── Summary ──────────────────────────────────────────────────────────

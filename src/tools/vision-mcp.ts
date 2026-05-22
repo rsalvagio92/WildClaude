@@ -19,6 +19,7 @@ import Anthropic from '@anthropic-ai/sdk';
 
 import { serveStdio } from './mcp-stdio.js';
 import { readEnvFile } from '../env.js';
+import { juice } from '../token-juice.js';
 
 function loadClient(): Anthropic | null {
   const secrets = readEnvFile(['ANTHROPIC_API_KEY']);
@@ -81,7 +82,12 @@ serveStdio({
       name: 'extract_text',
       description: 'Extract any text visible in the image (OCR-like). Returns extracted text or "(no text)".',
       inputSchema: { type: 'object', properties: { path: { type: 'string' } }, required: ['path'] },
-      handler: async (args) => ({ text: await ask(String(args.path), 'Extract all readable text from this image, preserving line breaks. If there is no text, reply exactly "(no text)".') }),
+      handler: async (args) => {
+        const raw = await ask(String(args.path), 'Extract all readable text from this image, preserving line breaks. If there is no text, reply exactly "(no text)".');
+        // Vision OCR often returns repeated headers / page chrome. Run dedup + normalize.
+        const r = juice(raw, { html: false, tag: 'vision-extract_text', maxChars: 8_000 });
+        return { text: r.text };
+      },
     },
     {
       name: 'answer',

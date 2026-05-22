@@ -50,6 +50,8 @@ import {
 } from './reflection.js';
 import { computeDigest, persistDigest } from './digest.js';
 import { listLiveSandboxes, listRecentSandboxes } from './sandbox/registry.js';
+import { RECOMMENDED_SKILLS } from './recommended-skills.js';
+import { getStats as getJuiceStats } from './token-juice.js';
 import path from 'path';
 
 export function registerHermesRoutes(app: Hono): void {
@@ -231,6 +233,19 @@ export function registerHermesRoutes(app: Hono): void {
       live: listLiveSandboxes(),
       recent: listRecentSandboxes(30),
     });
+  });
+
+  // ── Recommended skills (curated, ships with the app) ───────────────
+  app.get('/api/skill-marketplace/recommended', (c) => {
+    return c.json({ skills: RECOMMENDED_SKILLS });
+  });
+
+  // ── Token Juice stats ──────────────────────────────────────────────
+  app.get('/api/tokenjuice', (c) => {
+    const s = getJuiceStats();
+    const ratio = s.bytesIn === 0 ? 0 : 1 - s.bytesOut / s.bytesIn;
+    const dollarsSaved = (s.estTokensSaved / 1_000_000) * 3.00; // Sonnet input rate proxy
+    return c.json({ ...s, ratio, dollarsSaved });
   });
 
   // ── Skill marketplace (proxy) ─────────────────────────────────────

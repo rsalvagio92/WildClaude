@@ -887,8 +887,28 @@ textarea.form-input { resize: vertical; min-height: 70px; }
           Browse community skills from agentskills.io. Install with one click — Python scriptlets are stripped, and you preview the SKILL.md before it lands in <code>~/.wild-claude-pi/skills/</code>.
         </p>
 
+        <!-- Token Juice stats -->
         <div class="card" style="margin-bottom:14px">
-          <div class="card-title">SEARCH</div>
+          <div class="card-title" style="display:flex;justify-content:space-between;align-items:center">
+            <span>&#129362; TOKEN JUICE — compression stats</span>
+            <button class="btn btn-ghost btn-sm" onclick="loadTokenJuice()">Refresh</button>
+          </div>
+          <div id="tokenjuice-content">
+            <div class="chat-thinking" style="padding:8px 0">Loading...</div>
+          </div>
+        </div>
+
+        <!-- Curated picks -->
+        <div class="card" style="margin-bottom:14px">
+          <div class="card-title">&#11088; CURATED PICKS</div>
+          <div id="curated-skills">
+            <div class="chat-thinking" style="padding:8px 0">Loading...</div>
+          </div>
+        </div>
+
+        <!-- Live search -->
+        <div class="card" style="margin-bottom:14px">
+          <div class="card-title">SEARCH agentskills.io</div>
           <div style="display:flex;gap:8px;align-items:center">
             <input class="form-input" id="marketplace-search" placeholder="e.g. notion, git, finance" style="flex:1" onkeydown="if(event.key==='Enter')loadMarketplace()" />
             <button class="btn" onclick="loadMarketplace()">Search</button>
@@ -1474,7 +1494,7 @@ function navigate(page) {
     case 'evals': loadEvals(); break;
     case 'workflows': loadWorkflows(); break;
     case 'reflection': loadReflections(); break;
-    case 'marketplace': /* user-initiated */ break;
+    case 'marketplace': loadTokenJuice(); loadCuratedSkills(); break;
     case 'settings': loadSettings(); loadSecrets(); loadIdentity(); loadProfileEditor('me'); loadImportSources(); loadPersonality(); loadVerbosity(); break;
   }
 }
@@ -4462,6 +4482,54 @@ async function loadDigest(period) {
 // ─────────────────────────────────────────────
 // Hermes Tier 4: Skill Marketplace
 // ─────────────────────────────────────────────
+async function loadTokenJuice() {
+  const el = document.getElementById('tokenjuice-content');
+  try {
+    const s = await apiFetch('/api/tokenjuice');
+    const ratio = ((s.ratio || 0) * 100).toFixed(0);
+    el.innerHTML =
+      '<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:14px;font-size:13px">' +
+        '<div><b>Calls</b><br>' + (s.callsTotal || 0).toLocaleString() + '</div>' +
+        '<div><b>Bytes in → out</b><br>' + fmtBytes(s.bytesIn || 0) + ' → ' + fmtBytes(s.bytesOut || 0) + '</div>' +
+        '<div><b>Compression</b><br><span class="badge badge-purple">' + ratio + '%</span></div>' +
+        '<div><b>Est. saved</b><br>' + (s.estTokensSaved || 0).toLocaleString() + ' tok · $' + (s.dollarsSaved || 0).toFixed(4) + '</div>' +
+      '</div>';
+  } catch (err) {
+    el.innerHTML = '<div style="color:var(--text-muted)">TokenJuice stats unavailable.</div>';
+  }
+}
+function fmtBytes(n) {
+  if (n < 1024) return n + 'B';
+  if (n < 1024 * 1024) return (n / 1024).toFixed(1) + 'KB';
+  return (n / 1024 / 1024).toFixed(2) + 'MB';
+}
+
+async function loadCuratedSkills() {
+  const el = document.getElementById('curated-skills');
+  try {
+    const data = await apiFetch('/api/skill-marketplace/recommended');
+    const skills = data.skills || [];
+    el.innerHTML = skills.map(s =>
+      '<div style="border-bottom:1px solid var(--border);padding:10px 0">' +
+        '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">' +
+          '<b>' + escHtml(s.name) + '</b>' +
+          '<div style="display:flex;gap:6px">' +
+            (s.tags || []).map(t => '<span class="badge badge-blue" style="font-size:10px">' + escHtml(t) + '</span>').join('') +
+          '</div>' +
+        '</div>' +
+        '<div style="color:var(--text-muted);font-size:12px">' + escHtml(s.description) + '</div>' +
+        '<div style="color:var(--text-dim);font-size:11px;margin-top:4px;font-style:italic">' + escHtml(s.why) + '</div>' +
+        '<div style="margin-top:6px;display:flex;justify-content:space-between;align-items:center;gap:8px">' +
+          '<code style="font-size:11px;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + escHtml(s.install) + '</code>' +
+          '<a class="btn btn-ghost btn-sm" href="' + s.url + '" target="_blank" rel="noopener">Source &#x2197;</a>' +
+        '</div>' +
+      '</div>',
+    ).join('');
+  } catch (err) {
+    el.innerHTML = '<div style="color:var(--text-muted)">Failed to load curated list.</div>';
+  }
+}
+
 async function loadMarketplace() {
   const q = document.getElementById('marketplace-search').value.trim();
   const el = document.getElementById('marketplace-results');

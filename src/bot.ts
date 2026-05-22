@@ -122,6 +122,8 @@ import { registerReflectionCommands } from './reflection.js';
 import { registerDigestCommand } from './digest.js';
 import { registerMoodCommand } from './moods.js';
 import { registerSyncCommand } from './sync/litestream.js';
+import { registerTokenJuiceCommand } from './token-juice.js';
+import { registerRecommendedSkillsCommand } from './recommended-skills.js';
 import { registerImportCommands } from './importer.js';
 import { generateSessionHandoff, injectHandoffContext } from './session-continuity.js';
 import { detectCorrection, logReflection, buildReflectionContext } from './self-reflection.js';
@@ -1427,6 +1429,12 @@ export function createBot(): Bot {
 
   // /sync — cross-device sync via Litestream
   registerSyncCommand(bot, isAuthorised);
+
+  // /tokenjuice — compression stats (tokens saved on tool outputs)
+  registerTokenJuiceCommand(bot, isAuthorised);
+
+  // /recommended — curated list of useful third-party skills
+  registerRecommendedSkillsCommand(bot, isAuthorised);
 
   // /delegate — delegate task to an agent (handled via handleMessage delegation detection)
   // This command is intercepted by handleMessage's parseDelegation(),

@@ -20,6 +20,7 @@ import path from 'path';
 
 import { USER_DATA_DIR } from '../paths.js';
 import { serveStdio } from './mcp-stdio.js';
+import { juice } from '../token-juice.js';
 
 const SCREENSHOT_DIR = path.join(USER_DATA_DIR, 'uploads', 'browser-screenshots');
 
@@ -89,10 +90,15 @@ async function handleReadText(args: Record<string, unknown>) {
   if (!hostAllowed(url)) return { text: 'Blocked: host not allowlisted.', isError: true };
   return await withBrowser(async (page) => {
     await page.goto(url);
-    // page.evaluate runs in the browser context, where `document` is global.
+    // Pull the raw HTML and let TokenJuice convert + compress it. innerText
+    // would already strip tags but loses structure (headings, links, code).
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const text: string = await page.evaluate(() => ((globalThis as any).document?.body?.innerText ?? '').slice(0, 50_000));
-    return { text: text.trim() };
+    const html: string = await page.evaluate(() => (globalThis as any).document?.documentElement?.outerHTML ?? '');
+    const compressed = juice(html, { html: true, tag: 'browser-read_text', maxChars: 12_000 });
+    const refs = compressed.urlReferences.length > 0
+      ? '\n\n--- references ---\n' + compressed.urlReferences.map((u, i) => `[link${i + 1}] ${u}`).join('\n')
+      : '';
+    return { text: `${compressed.text.trim()}${refs}\n\n--- juice ---\n${compressed.bytesIn}B → ${compressed.bytesOut}B (saved ~${compressed.tokensSaved} tokens)` };
   });
 }
 
