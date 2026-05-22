@@ -31,11 +31,17 @@ export interface Digest {
 }
 
 export function computeDigest(periodStart: number, periodEnd: number): Digest {
+  // periodStart/End are ms. Legacy tables (memories, conversation_log,
+  // token_usage, audit_log) store timestamps in SECONDS; new tables we own
+  // (mission_tasks, tool_sequences, workflow_runs, eval_runs, reflections,
+  // sandboxes, digests) store ms. Convert per-query.
+  const startSec = Math.floor(periodStart / 1000);
+  const endSec = Math.floor(periodEnd / 1000);
   const db = getDb();
-  const between = (table: string, col = 'created_at') =>
-    db.prepare(`SELECT COUNT(*) AS n FROM ${table} WHERE ${col} >= ? AND ${col} < ?`).get(periodStart, periodEnd) as { n: number };
+  const betweenSec = (table: string, col = 'created_at') =>
+    db.prepare(`SELECT COUNT(*) AS n FROM ${table} WHERE ${col} >= ? AND ${col} < ?`).get(startSec, endSec) as { n: number };
 
-  const newMemories = between('memories').n;
+  const newMemories = betweenSec('memories').n;
   const tasksCompleted = (db.prepare(
     `SELECT COUNT(*) AS n FROM mission_tasks WHERE completed_at >= ? AND completed_at < ? AND status = 'completed'`,
   ).get(periodStart, periodEnd) as { n: number }).n;
@@ -57,7 +63,7 @@ export function computeDigest(periodStart: number, periodEnd: number): Digest {
 
   const costRow = db.prepare(
     `SELECT COALESCE(SUM(cost_usd), 0) AS cost, COUNT(*) AS turns FROM token_usage WHERE created_at >= ? AND created_at < ?`,
-  ).get(periodStart, periodEnd) as { cost: number; turns: number };
+  ).get(startSec, endSec) as { cost: number; turns: number };
 
   const metrics: DigestMetrics = {
     newMemories,

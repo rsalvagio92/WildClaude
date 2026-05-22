@@ -54,8 +54,11 @@ interface Sample {
 }
 
 function sampleWindow(sinceMs: number): Sample {
+  // Legacy tables (memories, conversation_log) store created_at in SECONDS.
+  // New tables I own (tool_sequences, mission_tasks) store ms.
+  const sinceSec = Math.floor(sinceMs / 1000);
   const db = getDb();
-  const turnCount = (db.prepare(`SELECT COUNT(*) AS n FROM conversation_log WHERE created_at >= ?`).get(sinceMs) as { n: number }).n;
+  const turnCount = (db.prepare(`SELECT COUNT(*) AS n FROM conversation_log WHERE created_at >= ?`).get(sinceSec) as { n: number }).n;
 
   const topics = db.prepare(
     `SELECT topics, COUNT(*) AS count
@@ -64,7 +67,7 @@ function sampleWindow(sinceMs: number): Sample {
       GROUP BY topics
       ORDER BY count DESC
       LIMIT 8`,
-  ).all(sinceMs) as Array<{ topics: string; count: number }>;
+  ).all(sinceSec) as Array<{ topics: string; count: number }>;
 
   const toolPatterns = db.prepare(
     `SELECT signature, count FROM tool_sequences
@@ -84,7 +87,7 @@ function sampleWindow(sinceMs: number): Sample {
       WHERE created_at >= ? AND importance >= 0.7
       ORDER BY importance DESC
       LIMIT 6`,
-  ).all(sinceMs) as Array<{ summary: string; importance: number }>;
+  ).all(sinceSec) as Array<{ summary: string; importance: number }>;
 
   return {
     topics: topics.map((t) => ({ topic: t.topics, count: t.count })),

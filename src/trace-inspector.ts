@@ -2,13 +2,16 @@
  * Trace Inspector — assemble per-turn agent traces from existing SQLite tables.
  *
  * We don't add new tracing infrastructure. We promote what we already log:
- *   - conversation_log : user + assistant text turns
- *   - token_usage      : per-turn cost / tokens / cache stats
+ *   - conversation_log : user + assistant text turns (created_at = SECONDS)
+ *   - token_usage      : per-turn cost / tokens / cache stats (created_at = SECONDS)
  *   - tool_sequences   : canonical tool patterns
  *   - mission_tasks    : multi-step task records
  *   - audit_log        : security/permission events
  *
- * The inspector composes them into a Langfuse-style timeline keyed by session_id.
+ * Timestamp normalization: conversation_log and token_usage store created_at
+ * as Unix SECONDS (not ms). We normalise to ms at the API boundary so the
+ * dashboard can `new Date(x)` uniformly across all surfaces. Date filters
+ * passed to those tables must be in seconds.
  */
 
 import { getDb } from './db.js';
@@ -70,6 +73,9 @@ interface UsageRow {
 
 // ── Queries ──────────────────────────────────────────────────────────
 
+/** conversation_log and token_usage store created_at in SECONDS; we expose ms. */
+const toMs = (sec: number): number => sec * 1000;
+
 export function listRecentSessions(limit = 25): SessionTrace[] {
   // Pull recent conversation turns and group by session_id.
   // For each session, compute totals from token_usage.
@@ -128,11 +134,11 @@ export function listRecentSessions(limit = 25): SessionTrace[] {
         agent_id: r.agent_id ?? 'main',
         role: r.role,
         content: tryDecrypt(r.content),
-        created_at: r.created_at,
+        created_at: toMs(r.created_at),
       })),
       totals,
-      startedAt: rows[0].created_at,
-      lastActivity: rows[rows.length - 1].created_at,
+      startedAt: toMs(rows[0].created_at),
+      lastActivity: toMs(rows[rows.length - 1].created_at),
     });
   }
   sessions.sort((a, b) => b.lastActivity - a.lastActivity);
@@ -177,7 +183,7 @@ export function getSessionTrace(sessionId: string): SessionTrace | null {
       agent_id: r.agent_id ?? 'main',
       role: r.role,
       content: tryDecrypt(r.content),
-      created_at: r.created_at,
+      created_at: toMs(r.created_at),
       usage: usage[idx] ? {
         inputTokens: usage[idx].input_tokens,
         outputTokens: usage[idx].output_tokens,
@@ -187,8 +193,8 @@ export function getSessionTrace(sessionId: string): SessionTrace | null {
       } : null,
     })),
     totals,
-    startedAt: rows[0].created_at,
-    lastActivity: rows[rows.length - 1].created_at,
+    startedAt: toMs(rows[0].created_at),
+    lastActivity: toMs(rows[rows.length - 1].created_at),
   };
 }
 
@@ -200,7 +206,8 @@ export interface CostBreakdown {
 }
 
 export function getCostBreakdown(days = 30): CostBreakdown {
-  const since = Date.now() - days * 24 * 3600 * 1000;
+  // token_usage.created_at is in SECONDS — filter and format accordingly.
+  const sinceSec = Math.floor(Date.now() / 1000) - days * 24 * 3600;
   const byAgent = getDb().prepare(
     `SELECT COALESCE(agent_id, 'main') AS agentId,
             COUNT(*) AS turns,
@@ -211,17 +218,17 @@ export function getCostBreakdown(days = 30): CostBreakdown {
       WHERE created_at >= ?
       GROUP BY agent_id
       ORDER BY costUsd DESC`,
-  ).all(since) as CostBreakdown['byAgent'];
+  ).all(sinceSec) as CostBreakdown['byAgent'];
 
   const byDay = getDb().prepare(
-    `SELECT strftime('%Y-%m-%d', created_at / 1000, 'unixepoch') AS day,
+    `SELECT strftime('%Y-%m-%d', created_at, 'unixepoch') AS day,
             COUNT(*) AS turns,
             COALESCE(SUM(cost_usd), 0) AS costUsd
        FROM token_usage
       WHERE created_at >= ?
       GROUP BY day
       ORDER BY day ASC`,
-  ).all(since) as CostBreakdown['byDay'];
+  ).all(sinceSec) as CostBreakdown['byDay'];
 
   const totals = byAgent.reduce(
     (acc, a) => ({ totalCostUsd: acc.totalCostUsd + a.costUsd, totalTurns: acc.totalTurns + a.turns }),
