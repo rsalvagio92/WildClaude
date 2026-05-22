@@ -1408,40 +1408,84 @@ export function startDashboard(botApi?: Api<RawApi>): void {
     const cp = await import('child_process');
     try {
       // Try to fetch from remote (non-fatal if offline)
-      try { cp.execSync(`git -C "${PROJECT_ROOT}" fetch origin --quiet`, { timeout: 8000 }); } catch { /* offline or no remote */ }
+      try { cp.execSync(`git -C "${PROJECT_ROOT}" fetch origin --quiet --prune`, { timeout: 12000 }); } catch { /* offline */ }
 
       const currentHash = cp.execSync(`git -C "${PROJECT_ROOT}" rev-parse --short HEAD`, { timeout: 3000 }).toString().trim();
       const currentFull = cp.execSync(`git -C "${PROJECT_ROOT}" rev-parse HEAD`, { timeout: 3000 }).toString().trim();
+      const currentBranch = cp.execSync(`git -C "${PROJECT_ROOT}" rev-parse --abbrev-ref HEAD`, { timeout: 3000 }).toString().trim();
 
-      // Remote HEAD (origin/master or origin/main)
+      // List remote branches (origin/<name>) — exclude HEAD aliases
+      let branches: string[] = [];
+      try {
+        const branchOut = cp.execSync(`git -C "${PROJECT_ROOT}" for-each-ref --format="%(refname:short)" refs/remotes/origin`, { timeout: 3000 }).toString().trim();
+        branches = branchOut.split('\n')
+          .map((b) => b.trim().replace(/^"|"$/g, ''))
+          .filter((b) => b && !b.endsWith('/HEAD'))
+          .map((b) => b.replace(/^origin\//, ''));
+        // De-dupe + put currentBranch first
+        const set = new Set(branches);
+        if (currentBranch !== 'HEAD' && currentBranch && !set.has(currentBranch)) {
+          set.add(currentBranch);
+        }
+        branches = Array.from(set);
+        if (branches.includes(currentBranch)) {
+          branches = [currentBranch, ...branches.filter((b) => b !== currentBranch)];
+        }
+      } catch { /* no remote */ }
+
+      // Pick the branch the caller asked about (default: current)
+      const requestedBranch = (c.req.query('branch') ?? currentBranch).replace(/[^A-Za-z0-9._/-]/g, '');
+      const refSpec = `origin/${requestedBranch}`;
+
+      // Remote HEAD info for the requested branch
       let remoteHash = '';
       let remoteMessage = '';
       let remoteDate = '';
       let behindBy = 0;
+      let aheadBy = 0;
       try {
-        const remoteBranch = cp.execSync(`git -C "${PROJECT_ROOT}" rev-parse --abbrev-ref --symbolic-full-name @{u}`, { timeout: 3000 }).toString().trim();
-        remoteHash = cp.execSync(`git -C "${PROJECT_ROOT}" rev-parse --short ${remoteBranch}`, { timeout: 3000 }).toString().trim();
-        const remoteLog = cp.execSync(`git -C "${PROJECT_ROOT}" log --pretty=format:"%s|||%ar" -1 ${remoteBranch}`, { timeout: 3000 }).toString().trim();
+        remoteHash = cp.execSync(`git -C "${PROJECT_ROOT}" rev-parse --short ${refSpec}`, { timeout: 3000 }).toString().trim();
+        const remoteLog = cp.execSync(`git -C "${PROJECT_ROOT}" log --pretty=format:"%s|||%ar" -1 ${refSpec}`, { timeout: 3000 }).toString().trim();
         [remoteMessage, remoteDate] = remoteLog.split('|||');
-        const behindStr = cp.execSync(`git -C "${PROJECT_ROOT}" rev-list --count HEAD..${remoteBranch}`, { timeout: 3000 }).toString().trim();
+        const behindStr = cp.execSync(`git -C "${PROJECT_ROOT}" rev-list --count HEAD..${refSpec}`, { timeout: 3000 }).toString().trim();
         behindBy = parseInt(behindStr, 10) || 0;
-      } catch { /* no upstream configured */ }
+        const aheadStr = cp.execSync(`git -C "${PROJECT_ROOT}" rev-list --count ${refSpec}..HEAD`, { timeout: 3000 }).toString().trim();
+        aheadBy = parseInt(aheadStr, 10) || 0;
+      } catch { /* branch doesn't exist on remote or no upstream */ }
 
-      // Local commit history (for downgrade options)
-      const log = cp.execSync(`git -C "${PROJECT_ROOT}" log --pretty=format:"%h|||%s|||%ar" -20`, { timeout: 3000 }).toString().trim();
-      const commits = log.split('\n').map(line => {
-        const [hash, message, date] = line.split('|||');
-        return { hash: hash?.trim(), message: message?.trim(), date: date?.trim() };
-      }).filter(c => c.hash);
+      // Commit history for the requested branch (for downgrade)
+      // If the branch is the current one, use HEAD; otherwise use the remote tip.
+      const logRef = requestedBranch === currentBranch ? 'HEAD' : refSpec;
+      let commits: Array<{ hash: string; message: string; date: string }> = [];
+      try {
+        const log = cp.execSync(`git -C "${PROJECT_ROOT}" log --pretty=format:"%h|||%s|||%ar" -20 ${logRef}`, { timeout: 3000 }).toString().trim();
+        commits = log.split('\n').map((line) => {
+          const [hash, message, date] = line.split('|||');
+          return { hash: hash?.trim(), message: message?.trim(), date: date?.trim() };
+        }).filter((c) => c.hash);
+      } catch { /* ref doesn't resolve */ }
+
+      // Is the working tree dirty? Switching branches with uncommitted changes is risky.
+      let dirty = false;
+      try {
+        const status = cp.execSync(`git -C "${PROJECT_ROOT}" status --porcelain`, { timeout: 3000 }).toString();
+        dirty = status.trim().length > 0;
+      } catch { /* */ }
 
       return c.json({
         current: currentHash,
         currentFull,
+        currentBranch,
+        requestedBranch,
+        branches,
         remote: remoteHash || currentHash,
         remoteMessage: remoteMessage?.trim() || commits[0]?.message || '',
         remoteDate: remoteDate?.trim() || commits[0]?.date || '',
         behindBy,
-        upToDate: behindBy === 0,
+        aheadBy,
+        upToDate: behindBy === 0 && aheadBy === 0 && requestedBranch === currentBranch,
+        isBranchSwitch: requestedBranch !== currentBranch,
+        dirty,
         commits,
       });
     } catch (err: unknown) {
@@ -1476,21 +1520,47 @@ export function startDashboard(botApi?: Api<RawApi>): void {
   ].join('\n');
 
   app.post('/api/system/upgrade', async (c) => {
-    const { spawn } = await import('child_process');
+    // Body shape: { branch?: string }. When the requested branch differs from
+    // the current one, this becomes a branch-switch (checkout + pull). Same
+    // branch ⇒ plain fast-forward pull.
+    const body = await c.req.json<{ branch?: string }>().catch(() => ({} as { branch?: string }));
+    const branchRaw = (body?.branch ?? '').trim();
+    const branch = branchRaw.replace(/[^A-Za-z0-9._/-]/g, '');
+    const { spawn, execSync } = await import('child_process');
     const ts = Date.now();
     writeUpgradeStatus('pulling', 'Pulling latest code...');
-    const script = [
+
+    // Detect current branch up-front so we know whether to checkout or just pull.
+    let currentBranch = '';
+    try {
+      currentBranch = execSync(`git -C "${PROJECT_ROOT}" rev-parse --abbrev-ref HEAD`, { timeout: 3000 }).toString().trim();
+    } catch { /* leave empty, default-to-pull */ }
+    const targetBranch = branch || currentBranch || 'master';
+    const isSwitch = !!branch && branch !== currentBranch;
+
+    const lines = [
       `set -e`,
       `cd "${PROJECT_ROOT}"`,
-      `echo '{"status":"pulling","message":"Pulling latest code...","ts":${ts}}' > ${UPGRADE_STATUS_FILE}`,
-      `git pull --ff-only origin master >> /tmp/wildclaude-upgrade.log 2>&1 || git pull --rebase >> /tmp/wildclaude-upgrade.log 2>&1 || (echo '{"status":"error","message":"git pull failed — check /tmp/wildclaude-upgrade.log","ts":${ts}}' > ${UPGRADE_STATUS_FILE} && exit 1)`,
-      `echo '{"status":"building","message":"Building TypeScript...","ts":${ts}}' > ${UPGRADE_STATUS_FILE}`,
-      `npm run build >> /tmp/wildclaude-upgrade.log 2>&1 || (echo '{"status":"error","message":"Build failed — check /tmp/wildclaude-upgrade.log","ts":${ts}}' > ${UPGRADE_STATUS_FILE} && exit 1)`,
-      restartSnippet(ts),
-    ].join('\n');
-    const child = spawn('bash', ['-c', script], { detached: true, stdio: 'ignore' });
+      `echo '{"status":"pulling","message":"${isSwitch ? `Switching to ${targetBranch}` : 'Pulling latest code'}...","ts":${ts}}' > ${UPGRADE_STATUS_FILE}`,
+    ];
+
+    if (isSwitch) {
+      // Stash any local edits so checkout doesn't fail; restore on failure.
+      lines.push(`git stash push --include-untracked -m "wildclaude-auto-stash-${ts}" >> /tmp/wildclaude-upgrade.log 2>&1 || true`);
+      lines.push(`git fetch origin --prune >> /tmp/wildclaude-upgrade.log 2>&1`);
+      lines.push(`git checkout ${targetBranch} >> /tmp/wildclaude-upgrade.log 2>&1 || git checkout -b ${targetBranch} origin/${targetBranch} >> /tmp/wildclaude-upgrade.log 2>&1 || (echo '{"status":"error","message":"checkout failed — see /tmp/wildclaude-upgrade.log","ts":${ts}}' > ${UPGRADE_STATUS_FILE} && exit 1)`);
+      lines.push(`git pull --ff-only origin ${targetBranch} >> /tmp/wildclaude-upgrade.log 2>&1 || true`);
+    } else {
+      lines.push(`git pull --ff-only origin ${targetBranch} >> /tmp/wildclaude-upgrade.log 2>&1 || git pull --rebase >> /tmp/wildclaude-upgrade.log 2>&1 || (echo '{"status":"error","message":"git pull failed — check /tmp/wildclaude-upgrade.log","ts":${ts}}' > ${UPGRADE_STATUS_FILE} && exit 1)`);
+    }
+
+    lines.push(`echo '{"status":"building","message":"Building TypeScript...","ts":${ts}}' > ${UPGRADE_STATUS_FILE}`);
+    lines.push(`npm run build >> /tmp/wildclaude-upgrade.log 2>&1 || (echo '{"status":"error","message":"Build failed — check /tmp/wildclaude-upgrade.log","ts":${ts}}' > ${UPGRADE_STATUS_FILE} && exit 1)`);
+    lines.push(restartSnippet(ts));
+
+    const child = spawn('bash', ['-c', lines.join('\n')], { detached: true, stdio: 'ignore' });
     child.unref();
-    return c.json({ ok: true });
+    return c.json({ ok: true, branch: targetBranch, isSwitch });
   });
 
   app.post('/api/system/downgrade', async (c) => {

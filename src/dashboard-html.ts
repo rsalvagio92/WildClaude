@@ -2598,40 +2598,81 @@ function fmtNum(n) {
 // System Update — upgrade / downgrade
 // ─────────────────────────────────────────────
 let _upgradePolling = false;
+/** Branch the user has currently selected in the dropdown (defaults to current). */
+let _selectedBranch = '';
 
-async function loadVersions() {
+async function loadVersions(opts) {
   const el = document.getElementById('update-content');
+  const wantBranch = (opts && opts.branch) || _selectedBranch || '';
   try {
-    const d = await apiFetch('/api/system/versions');
+    const url = '/api/system/versions' + (wantBranch ? '?branch=' + encodeURIComponent(wantBranch) : '');
+    const d = await apiFetch(url);
     const current = d.current || 'unknown';
     const remote = d.remote || current;
-    const upToDate = d.upToDate !== false && current === remote;
+    const upToDate = d.upToDate !== false;
     const behindBy = d.behindBy || 0;
+    const aheadBy = d.aheadBy || 0;
     const commits = d.commits || [];
+    const branches = d.branches || [];
+    const currentBranch = d.currentBranch || '';
+    const requestedBranch = d.requestedBranch || currentBranch;
+    const isBranchSwitch = !!d.isBranchSwitch;
+    const dirty = !!d.dirty;
     const currentCommit = commits[0] || {};
+    // Remember the selection so subsequent loads keep it
+    if (requestedBranch) _selectedBranch = requestedBranch;
 
-    const statusBadge = upToDate
-      ? '<span style="background:var(--green);color:#000;border-radius:4px;padding:2px 8px;font-size:11px;font-weight:600">UP TO DATE</span>'
-      : '<span style="background:var(--yellow);color:#000;border-radius:4px;padding:2px 8px;font-size:11px;font-weight:600">' + behindBy + ' COMMIT' + (behindBy !== 1 ? 'S' : '') + ' BEHIND</span>';
+    let statusBadge;
+    if (isBranchSwitch) {
+      statusBadge = '<span style="background:var(--accent);color:#000;border-radius:4px;padding:2px 8px;font-size:11px;font-weight:600">BRANCH SWITCH</span>';
+    } else if (upToDate) {
+      statusBadge = '<span style="background:var(--green);color:#000;border-radius:4px;padding:2px 8px;font-size:11px;font-weight:600">UP TO DATE</span>';
+    } else {
+      statusBadge = '<span style="background:var(--yellow);color:#000;border-radius:4px;padding:2px 8px;font-size:11px;font-weight:600">' + behindBy + ' COMMIT' + (behindBy !== 1 ? 'S' : '') + ' BEHIND</span>';
+    }
 
-    const upgradeBtn = upToDate
-      ? '<button class="btn" id="upgrade-btn" onclick="confirmUpgrade()" style="opacity:0.5" title="Already up to date">&#8593; Upgrade</button>'
-      : '<button class="btn btn-primary" id="upgrade-btn" onclick="confirmUpgrade()">&#8593; Upgrade</button>';
+    const upgradeDisabled = upToDate && !isBranchSwitch;
+    const upgradeLabel = isBranchSwitch
+      ? '&#8595;&#8593; Switch to ' + escHtml(requestedBranch)
+      : '&#8593; Upgrade' + (aheadBy > 0 && !isBranchSwitch ? ' (ahead ' + aheadBy + ')' : '');
+    const upgradeBtn = upgradeDisabled
+      ? '<button class="btn" id="upgrade-btn" onclick="confirmUpgrade()" style="opacity:0.5" title="Already up to date">' + upgradeLabel + '</button>'
+      : '<button class="btn ' + (isBranchSwitch ? 'btn-primary' : 'btn-primary') + '" id="upgrade-btn" onclick="confirmUpgrade()">' + upgradeLabel + '</button>';
 
-    const downgradeOptions = commits.slice(1).map(c =>
+    const branchOptions = branches.map(b =>
+      '<option value="' + escHtml(b) + '"' + (b === requestedBranch ? ' selected' : '') + '>' +
+        escHtml(b) + (b === currentBranch ? ' (current)' : '') +
+      '</option>',
+    ).join('');
+
+    const downgradeOptions = commits.slice(isBranchSwitch ? 0 : 1).map(c =>
       '<option value="' + escHtml(c.hash) + '">' + escHtml(c.hash) + ' — ' + escHtml(c.message) + ' (' + escHtml(c.date) + ')</option>'
     ).join('');
 
+    const dirtyWarn = dirty
+      ? '<div style="margin-top:10px;padding:8px 10px;background:var(--bg-input);border-left:3px solid var(--yellow);border-radius:4px;font-size:12px;color:var(--text-muted)">' +
+        '&#9888;&#65039; Working tree has uncommitted changes. Switching branches will auto-stash them.</div>'
+      : '';
+
     el.innerHTML =
       '<div class="card" style="margin-bottom:12px">' +
-        '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:12px">' +
+        '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:12px;flex-wrap:wrap">' +
           '<div class="card-title" style="margin:0">VERSION</div>' +
           statusBadge +
         '</div>' +
+        // Branch selector
+        (branches.length > 1 ?
+          '<div style="display:flex;gap:8px;align-items:center;margin-bottom:10px">' +
+            '<label style="font-size:11px;color:var(--text-dim);min-width:60px">BRANCH</label>' +
+            '<select id="branch-select" onchange="onBranchChange(this.value)" style="flex:1;background:var(--bg-input);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:6px 10px;font-size:13px">' +
+              branchOptions +
+            '</select>' +
+          '</div>'
+        : '') +
         // Installed row
         '<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap">' +
           '<div>' +
-            '<div style="font-size:11px;color:var(--text-dim);margin-bottom:3px">INSTALLED</div>' +
+            '<div style="font-size:11px;color:var(--text-dim);margin-bottom:3px">INSTALLED' + (currentBranch ? ' · <span style="color:var(--accent-light)">' + escHtml(currentBranch) + '</span>' : '') + '</div>' +
             '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">' +
               '<span style="font-family:monospace;color:var(--accent-light);font-size:14px">' + escHtml(current) + '</span>' +
               '<span style="color:var(--text-muted);font-size:13px">' + escHtml(currentCommit.message || '') + '</span>' +
@@ -2639,10 +2680,10 @@ async function loadVersions() {
             '</div>' +
           '</div>' +
         '</div>' +
-        // Latest on git row (only if different)
-        (!upToDate ?
+        // Target (latest on selected branch)
+        (!upToDate || isBranchSwitch ?
           '<div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border)">' +
-            '<div style="font-size:11px;color:var(--text-dim);margin-bottom:3px">LATEST ON GIT</div>' +
+            '<div style="font-size:11px;color:var(--text-dim);margin-bottom:3px">TARGET (origin/' + escHtml(requestedBranch) + ')</div>' +
             '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">' +
               '<span style="font-family:monospace;color:var(--yellow);font-size:14px">' + escHtml(remote) + '</span>' +
               '<span style="color:var(--text-muted);font-size:13px">' + escHtml(d.remoteMessage || '') + '</span>' +
@@ -2650,6 +2691,7 @@ async function loadVersions() {
             '</div>' +
           '</div>'
         : '') +
+        dirtyWarn +
         // Upgrade button
         '<div style="margin-top:12px;display:flex;justify-content:flex-end">' +
           upgradeBtn +
@@ -2659,7 +2701,7 @@ async function loadVersions() {
       '</div>' +
       (downgradeOptions ?
         '<div class="card">' +
-          '<div class="card-title">DOWNGRADE</div>' +
+          '<div class="card-title">DOWNGRADE (commits on ' + escHtml(requestedBranch) + ')</div>' +
           '<div style="display:flex;gap:8px;align-items:center">' +
             '<select id="downgrade-select" style="flex:1;background:var(--bg-input);color:var(--text);border:1px solid var(--border);' +
               'border-radius:6px;padding:6px 10px;font-size:13px">' +
@@ -2667,7 +2709,7 @@ async function loadVersions() {
             '</select>' +
             '<button class="btn btn-danger" id="downgrade-btn" onclick="confirmDowngrade()">&#8595; Downgrade</button>' +
           '</div>' +
-          '<div style="margin-top:6px;font-size:11px;color:var(--text-dim)">&#9888;&#65039; Reverts to a previous commit, rebuilds, and restarts the service.</div>' +
+          '<div style="margin-top:6px;font-size:11px;color:var(--text-dim)">&#9888;&#65039; Checks out the chosen commit (detached HEAD), rebuilds, and restarts.</div>' +
           '<div id="downgrade-log" style="display:none;margin-top:12px;font-family:monospace;font-size:12px;' +
             'background:var(--bg-input);border-radius:6px;padding:12px;line-height:1.8;max-height:200px;overflow-y:auto"></div>' +
         '</div>'
@@ -2677,8 +2719,18 @@ async function loadVersions() {
   }
 }
 
+function onBranchChange(branch) {
+  _selectedBranch = branch;
+  loadVersions({ branch });
+}
+
 function confirmUpgrade() {
-  if (!confirm('Upgrade WildClaude? The service will pull the latest code, rebuild, and restart. The dashboard will reconnect automatically.')) return;
+  const branch = _selectedBranch || '';
+  const isSwitch = document.getElementById('branch-select') && document.querySelector('[data-current-branch]')?.dataset?.currentBranch !== branch;
+  const msg = branch
+    ? 'Upgrade to branch "' + branch + '"? The service will checkout (if needed), pull, rebuild, and restart. The dashboard will reconnect automatically.'
+    : 'Upgrade WildClaude? The service will pull the latest code, rebuild, and restart. The dashboard will reconnect automatically.';
+  if (!confirm(msg)) return;
   startSystemOp('upgrade', null);
 }
 
@@ -2710,7 +2762,9 @@ async function startSystemOp(op, commit) {
   try {
     appendLog('⏳', 'Starting ' + op + '...', 'var(--text-muted)');
     const url = '/api/system/' + op;
-    const body = op === 'downgrade' ? JSON.stringify({ commit }) : '{}';
+    const body = op === 'downgrade'
+      ? JSON.stringify({ commit })
+      : JSON.stringify({ branch: _selectedBranch || undefined });
     await apiFetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body });
     appendLog('✓', 'Job started', 'var(--green)');
 
