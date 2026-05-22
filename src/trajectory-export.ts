@@ -56,16 +56,20 @@ interface ConversationRow {
   agent_id: string | null;
 }
 
+// Order matters: IPv4 runs before phone so the phone regex (which is also
+// happy to eat digit-with-dot runs) doesn't redact IPs as phone numbers and
+// in the process bypass the localhost-preservation lookahead.
 const SCRUBBERS: Array<{ name: string; re: RegExp; replace: string }> = [
   { name: 'email', re: /\b[\w._%+-]+@[\w.-]+\.[a-z]{2,}\b/gi, replace: '[EMAIL]' },
-  // International phone numbers, at least 7 digits with optional separators
-  { name: 'phone', re: /\+?\d[\d\s().-]{6,}\d/g, replace: '[PHONE]' },
-  // Long alphanumeric tokens: 24+ chars with mixed case or underscores
-  { name: 'token', re: /\b[A-Za-z0-9_-]{24,}\b/g, replace: '[TOKEN]' },
-  // Common API key prefixes
+  // API key prefixes — run before generic 'token' so the prefix is preserved in the placeholder.
   { name: 'api-key', re: /\b(sk|pk|ghp|ghs|gho|ghu|github_pat|xoxb|xoxp|xoxa)[-_][A-Za-z0-9_-]{8,}\b/g, replace: '[API_KEY]' },
-  // IPv4 addresses (skip 0.0.0.0 / 127.0.0.1 / localhost which aren't PII)
-  { name: 'ipv4', re: /\b(?!0\.0\.0\.0|127\.0\.0\.1)(\d{1,3}\.){3}\d{1,3}\b/g, replace: '[IP]' },
+  // IPv4 addresses (skip 0.0.0.0 / 127.0.0.1 which aren't PII).
+  { name: 'ipv4', re: /\b(?!0\.0\.0\.0\b|127\.0\.0\.1\b)(?:\d{1,3}\.){3}\d{1,3}\b/g, replace: '[IP]' },
+  // International phone numbers: 7+ digits, must contain at least one phone-y
+  // separator (+, space, parens, or hyphen) so plain digit-dot IPs aren't matched.
+  { name: 'phone', re: /(?:\+\d[\d\s().-]{6,}\d|\(\d+\)[\d\s.-]{5,}\d|\d{2,4}[-\s]\d{2,4}[-\s]\d{2,4}(?:[-\s]\d{2,4})?)/g, replace: '[PHONE]' },
+  // Long alphanumeric tokens: 24+ chars with mixed case or underscores.
+  { name: 'token', re: /\b[A-Za-z0-9_-]{24,}\b/g, replace: '[TOKEN]' },
 ];
 
 const IDENTITY_PATTERNS = [
@@ -99,7 +103,7 @@ function defaultOutputPath(): string {
   return path.join(USER_DATA_DIR, 'exports', `trajectories-${stamp}.jsonl`);
 }
 
-export function exportTrajectories(opts: ExportOptions = {}): ExportResult {
+export async function exportTrajectories(opts: ExportOptions = {}): Promise<ExportResult> {
   const start = Date.now();
   const outputPath = opts.outputPath ?? defaultOutputPath();
   fs.mkdirSync(path.dirname(outputPath), { recursive: true });
@@ -150,6 +154,13 @@ export function exportTrajectories(opts: ExportOptions = {}): ExportResult {
   }
   stream.end();
 
+  // Wait for the write stream to flush before returning — callers expect
+  // the file to be on disk by the time we resolve.
+  await new Promise<void>((resolve, reject) => {
+    stream.on('finish', resolve);
+    stream.on('error', reject);
+  });
+
   const durationMs = Date.now() - start;
   logger.info({ outputPath, rowsExported, rowsSkipped, bytesWritten, durationMs }, 'Trajectories exported');
   return { outputPath, rowsExported, rowsSkipped, bytesWritten, durationMs };
@@ -199,7 +210,7 @@ export function registerExportCommands(
     }
 
     try {
-      const r = exportTrajectories(opts);
+      const r = await exportTrajectories(opts);
       await ctx.reply(
         `✓ Exported ${r.rowsExported} rows (skipped ${r.rowsSkipped}) — ` +
         `${(r.bytesWritten / 1024).toFixed(1)}KB in ${r.durationMs}ms\n` +
