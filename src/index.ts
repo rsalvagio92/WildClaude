@@ -9,6 +9,7 @@ import { ensureUserDataDirs, seedKernelTemplates, USER_DATA_DIR } from './paths.
 import { ensureEncryptionKey } from './secrets.js';
 import { needsCliOnboarding, runCliOnboarding } from './cli-onboarding.js';
 import { startDashboard } from './dashboard.js';
+import { startAcpWebSocketServer } from './acp/ws-server.js';
 import { initDatabase, cleanupOldMissionTasks, insertAuditLog } from './db.js';
 import { initSecurity, setAuditCallback } from './security.js';
 import { logger } from './logger.js';
@@ -200,6 +201,8 @@ async function main(): Promise<void> {
   // Dashboard only runs in the main bot process
   if (AGENT_ID === 'main') {
     startDashboard(bot?.api);
+    // ACP WebSocket transport (opt-in via ACP_WS_PORT)
+    startAcpWebSocketServer();
   }
 
   if (ALLOWED_CHAT_ID) {

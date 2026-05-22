@@ -157,6 +157,15 @@ export async function classifyMessage(
     };
   }
 
+  // Soft-throttle: when monthly budget is exceeded, downgrade everything to Haiku.
+  // Pattern matching below still runs; this only affects what we'd ROUTE to.
+  try {
+    const { shouldDowngradeForBudget } = await import('./cost-budget.js');
+    if (shouldDowngradeForBudget()) {
+      return { tier: 'SIMPLE', model: TIER_TO_MODEL.SIMPLE, latencyMs: 0 };
+    }
+  } catch { /* cost-budget unavailable, skip */ }
+
   // Fast-path: pattern matching (no API call needed)
   const trimmed = message.trim();
 

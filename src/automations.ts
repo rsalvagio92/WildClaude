@@ -54,6 +54,35 @@ export const DEFAULT_AUTOMATIONS: AutomationDef[] = [
     cron: '0 18 * * 0',
     description: 'Revisione settimanale domenica alle 18',
   },
+  // ── Hermes-tier auto-cron: things we built that needed manual triggers ──
+  {
+    id: 'auto-reflect-day',
+    name: 'Daily reflection (auto)',
+    prompt: '__internal:reflect:day',
+    cron: '30 8 * * *',
+    description: "Genera la reflection giornaliera alle 08:30",
+  },
+  {
+    id: 'auto-reflect-week',
+    name: 'Weekly reflection (auto)',
+    prompt: '__internal:reflect:week',
+    cron: '0 19 * * 0',
+    description: 'Genera la reflection settimanale domenica alle 19',
+  },
+  {
+    id: 'auto-digest-day',
+    name: 'Daily digest (auto)',
+    prompt: '__internal:digest:day',
+    cron: '0 23 * * *',
+    description: 'Computa il digest giornaliero alle 23',
+  },
+  {
+    id: 'auto-budget-check',
+    name: 'Cost budget check',
+    prompt: '__internal:budget:check',
+    cron: '0 9 * * *',
+    description: 'Controlla budget mensile alle 09 ogni giorno',
+  },
 ];
 
 /**

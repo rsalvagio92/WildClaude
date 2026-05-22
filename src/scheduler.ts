@@ -20,6 +20,49 @@ import { emitChatEvent } from './state.js';
 
 type Sender = (text: string) => Promise<void>;
 
+/**
+ * Internal sentinel prompts trigger local handlers without calling the LLM.
+ * Used by auto-cron tasks (reflection, digest, budget check) so cron jobs
+ * don't burn tokens just to dispatch their work.
+ */
+async function handleInternalSentinel(prompt: string, send: Sender): Promise<void> {
+  if (prompt === '__internal:reflect:day' || prompt === '__internal:reflect:week') {
+    const { generateReflection } = await import('./reflection.js');
+    const period = prompt.endsWith(':week') ? 'week' : 'day';
+    try {
+      const r = await generateReflection(period);
+      if (!r) {
+        await send(`Auto-reflection (${period}): nessuna attività rilevante da analizzare.`);
+        return;
+      }
+      const lines = [`<b>Auto-reflection (${period})</b>`, r.summary];
+      if (r.patterns.length > 0) {
+        lines.push('');
+        lines.push('<b>Patterns:</b>');
+        lines.push(...r.patterns.map((p, i) => `${i + 1}. ${p}`));
+      }
+      await send(lines.join('\n'));
+    } catch (err) {
+      logger.warn({ err, period }, 'auto-reflection failed');
+    }
+    return;
+  }
+  if (prompt === '__internal:digest:day') {
+    const { computeDigest, persistDigest } = await import('./digest.js');
+    const now = Date.now();
+    const d = computeDigest(now - 24 * 3600 * 1000, now);
+    persistDigest(d);
+    await send(`<pre>${d.body.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</pre>`);
+    return;
+  }
+  if (prompt === '__internal:budget:check') {
+    const { checkBudgetAndAlert } = await import('./cost-budget.js');
+    await checkBudgetAndAlert(send);
+    return;
+  }
+  logger.warn({ prompt }, 'unknown internal sentinel');
+}
+
 /** Max time (ms) a scheduled task can run before being killed. */
 const TASK_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
 
@@ -89,6 +132,14 @@ async function runDueTasks(): Promise<void> {
       const timeout = setTimeout(() => abortController.abort(), TASK_TIMEOUT_MS);
 
       try {
+        // ── Internal sentinel tasks: don't call the LLM, route to local handlers ──
+        if (task.prompt.startsWith('__internal:')) {
+          await handleInternalSentinel(task.prompt, sender);
+          clearTimeout(timeout);
+          updateTaskAfterRun(task.id, nextRun, '(internal sentinel)', 'success');
+          return;
+        }
+
         await sender(`Scheduled task running: "${task.prompt.slice(0, 80)}${task.prompt.length > 80 ? '...' : ''}"`);
 
         // Run as a fresh agent call (no session — scheduled tasks are autonomous)

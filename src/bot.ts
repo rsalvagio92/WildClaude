@@ -124,6 +124,9 @@ import { registerMoodCommand } from './moods.js';
 import { registerSyncCommand } from './sync/litestream.js';
 import { registerTokenJuiceCommand } from './token-juice.js';
 import { registerRecommendedSkillsCommand } from './recommended-skills.js';
+import { registerBudgetCommand } from './cost-budget.js';
+import { registerAgentImproveCommand } from './agent-self-improvement.js';
+import { registerFinetuneCommand } from './finetune.js';
 import { registerImportCommands } from './importer.js';
 import { generateSessionHandoff, injectHandoffContext } from './session-continuity.js';
 import { detectCorrection, logReflection, buildReflectionContext } from './self-reflection.js';
@@ -1435,6 +1438,15 @@ export function createBot(): Bot {
 
   // /recommended — curated list of useful third-party skills
   registerRecommendedSkillsCommand(bot, isAuthorised);
+
+  // /budget — monthly cost status + threshold check
+  registerBudgetCommand(bot, isAuthorised);
+
+  // /agent_improve — closed-loop agent refinement based on failed mission tasks
+  registerAgentImproveCommand(bot, isAuthorised);
+
+  // /finetune — trajectory-based fine-tune pipeline (gated by FINETUNE_ENABLED)
+  registerFinetuneCommand(bot, isAuthorised);
 
   // /delegate — delegate task to an agent (handled via handleMessage delegation detection)
   // This command is intercepted by handleMessage's parseDelegation(),

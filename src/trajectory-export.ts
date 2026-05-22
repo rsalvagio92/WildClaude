@@ -15,7 +15,7 @@
  *     is …") are skipped entirely unless raw=true.
  */
 
-import crypto from 'crypto';
+import crypto from 'node:crypto';
 import fs from 'fs';
 import path from 'path';
 
@@ -36,6 +36,12 @@ export interface ExportOptions {
   outputPath?: string;
   /** Max rows. Default: no cap. */
   limit?: number;
+  /**
+   * Optional passphrase. When set, the JSONL is encrypted with AES-256-GCM
+   * (key = scrypt(passphrase, salt)) and written as a single .enc file:
+   *   salt(16) | iv(12) | authTag(16) | ciphertext
+   */
+  encryptPassphrase?: string;
 }
 
 export interface ExportResult {
@@ -105,7 +111,8 @@ function defaultOutputPath(): string {
 
 export async function exportTrajectories(opts: ExportOptions = {}): Promise<ExportResult> {
   const start = Date.now();
-  const outputPath = opts.outputPath ?? defaultOutputPath();
+  let outputPath = opts.outputPath ?? defaultOutputPath();
+  if (opts.encryptPassphrase && !outputPath.endsWith('.enc')) outputPath += '.enc';
   fs.mkdirSync(path.dirname(outputPath), { recursive: true });
 
   const where: string[] = [];
@@ -126,7 +133,11 @@ export async function exportTrajectories(opts: ExportOptions = {}): Promise<Expo
   let rowsExported = 0;
   let rowsSkipped = 0;
   let bytesWritten = 0;
-  const stream = fs.createWriteStream(outputPath, { encoding: 'utf8' });
+  // For encryption we buffer in memory first, then write the encrypted blob.
+  // For plain mode we stream to disk as before.
+  const encrypt = !!opts.encryptPassphrase;
+  const chunks: string[] = [];
+  const stream = encrypt ? null : fs.createWriteStream(outputPath, { encoding: 'utf8' });
 
   for (const row of rows) {
     if (!opts.raw && isIdentityLeak(row.content)) {
@@ -148,18 +159,28 @@ export async function exportTrajectories(opts: ExportOptions = {}): Promise<Expo
       ...(scrubbed.redactions > 0 ? { redactions: scrubbed.redactions } : {}),
     };
     const line = JSON.stringify(out) + '\n';
-    stream.write(line);
+    if (stream) stream.write(line); else chunks.push(line);
     bytesWritten += Buffer.byteLength(line, 'utf8');
     rowsExported++;
   }
-  stream.end();
 
-  // Wait for the write stream to flush before returning — callers expect
-  // the file to be on disk by the time we resolve.
-  await new Promise<void>((resolve, reject) => {
-    stream.on('finish', resolve);
-    stream.on('error', reject);
-  });
+  if (stream) {
+    stream.end();
+    await new Promise<void>((resolve, reject) => {
+      stream.on('finish', resolve);
+      stream.on('error', reject);
+    });
+  } else {
+    // AES-256-GCM with scrypt-derived key
+    const plain = Buffer.from(chunks.join(''), 'utf8');
+    const salt = crypto.randomBytes(16);
+    const iv = crypto.randomBytes(12);
+    const key = crypto.scryptSync(opts.encryptPassphrase!, salt, 32);
+    const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
+    const ct = Buffer.concat([cipher.update(plain), cipher.final()]);
+    const tag = cipher.getAuthTag();
+    fs.writeFileSync(outputPath, Buffer.concat([salt, iv, tag, ct]));
+  }
 
   const durationMs = Date.now() - start;
   logger.info({ outputPath, rowsExported, rowsSkipped, bytesWritten, durationMs }, 'Trajectories exported');
@@ -200,6 +221,8 @@ export function registerExportCommands(
       } else if (p === '--limit' && parts[i + 1]) {
         const n = parseInt(parts[++i]!, 10);
         if (Number.isFinite(n)) opts.limit = n;
+      } else if (p === '--encrypt' && parts[i + 1]) {
+        opts.encryptPassphrase = parts[++i]!;
       }
     }
 

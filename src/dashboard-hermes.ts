@@ -52,6 +52,10 @@ import { computeDigest, persistDigest } from './digest.js';
 import { listLiveSandboxes, listRecentSandboxes } from './sandbox/registry.js';
 import { RECOMMENDED_SKILLS } from './recommended-skills.js';
 import { getStats as getJuiceStats } from './token-juice.js';
+import { getBudgetStatus } from './cost-budget.js';
+import { selectTrajectories, estimateCost, convertToJsonl } from './finetune.js';
+import { listPendingProposals as listAgentImprovementProposals, findStrugglingAgents, runSelfImprovementCycle, acceptAgentProposal, discardAgentProposal } from './agent-self-improvement.js';
+import { introspectSemantic } from './memory-blocks.js';
 import path from 'path';
 
 export function registerHermesRoutes(app: Hono): void {
@@ -246,6 +250,57 @@ export function registerHermesRoutes(app: Hono): void {
     const ratio = s.bytesIn === 0 ? 0 : 1 - s.bytesOut / s.bytesIn;
     const dollarsSaved = (s.estTokensSaved / 1_000_000) * 3.00; // Sonnet input rate proxy
     return c.json({ ...s, ratio, dollarsSaved });
+  });
+
+  // ── Budget status ──────────────────────────────────────────────────
+  app.get('/api/budget', (c) => c.json(getBudgetStatus()));
+
+  // ── Semantic memory search ─────────────────────────────────────────
+  app.get('/api/memory-search', async (c) => {
+    const q = c.req.query('q') ?? '';
+    if (!q.trim()) return c.json({ query: '', total: 0, byScope: { user: [], session: [], agent: [] }, semantic: false });
+    return c.json(await introspectSemantic(q));
+  });
+
+  // ── Fine-tune estimates ────────────────────────────────────────────
+  app.get('/api/finetune/estimate', (c) => {
+    const days = parseInt(c.req.query('days') ?? '30', 10);
+    const sinceSec = Math.floor((Date.now() - days * 24 * 3600 * 1000) / 1000);
+    const pairs = selectTrajectories({ since: sinceSec, limit: 2000 });
+    return c.json({ ...estimateCost(pairs), days });
+  });
+
+  app.post('/api/finetune/build', async (c) => {
+    const body = await c.req.json().catch(() => ({})) as { days?: number };
+    const days = body.days ?? 30;
+    const sinceSec = Math.floor((Date.now() - days * 24 * 3600 * 1000) / 1000);
+    const pairs = selectTrajectories({ since: sinceSec, limit: 5000 });
+    const outputPath = convertToJsonl(pairs);
+    return c.json({ outputPath, pairs: pairs.length });
+  });
+
+  // ── Agent self-improvement ─────────────────────────────────────────
+  app.get('/api/agent-improve', (c) => {
+    return c.json({
+      struggling: findStrugglingAgents(),
+      pendingProposals: listAgentImprovementProposals(),
+    });
+  });
+
+  app.post('/api/agent-improve/run', async (c) => {
+    const proposals = await runSelfImprovementCycle();
+    return c.json({ proposals });
+  });
+
+  app.post('/api/agent-improve/accept', async (c) => {
+    const body = await c.req.json() as { proposalPath: string; agentId: string };
+    const r = acceptAgentProposal(body.proposalPath, body.agentId);
+    return c.json(r);
+  });
+
+  app.post('/api/agent-improve/discard', async (c) => {
+    const body = await c.req.json() as { proposalPath: string };
+    return c.json({ ok: discardAgentProposal(body.proposalPath) });
   });
 
   // ── Skill marketplace (proxy) ─────────────────────────────────────

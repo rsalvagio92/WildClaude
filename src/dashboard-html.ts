@@ -279,6 +279,16 @@ textarea.form-input { resize: vertical; min-height: 70px; }
   .topbar { padding: 0 10px; }
   .content { padding: 12px; }
   .chat-layout { height: calc(100dvh - 94px); }
+  /* Hermes module fixes: 4-col grids stack on mobile */
+  #tokenjuice-content > div { grid-template-columns: 1fr 1fr !important; }
+  #cost-breakdown-content > div { grid-template-columns: 1fr !important; }
+  .card-title { font-size: 13px; }
+  pre { font-size: 11px !important; word-break: break-word; }
+  code { word-break: break-word; }
+  /* Side-by-side button groups wrap */
+  .card .btn-sm + .btn-sm { margin-top: 4px; }
+  /* Trace inspector turns get more breathing room */
+  #trace-detail-content > div { padding-left: 6px !important; padding-right: 6px !important; }
 }
 @media (min-width: 641px) {
   #mobile-menu-btn { display: none; }
@@ -394,6 +404,10 @@ textarea.form-input { resize: vertical; min-height: 70px; }
       <div class="nav-item" data-page="marketplace" onclick="navigate('marketplace')">
         <span class="nav-icon">&#128722;</span>
         <span class="nav-label">Skill Marketplace</span>
+      </div>
+      <div class="nav-item" data-page="hermes-lab" onclick="navigate('hermes-lab')">
+        <span class="nav-icon">&#129514;</span>
+        <span class="nav-label">Hermes Lab</span>
       </div>
       <div class="nav-item" data-page="settings" onclick="navigate('settings')">
         <span class="nav-icon">&#9881;</span><span class="nav-label">Settings</span>
@@ -919,6 +933,59 @@ textarea.form-input { resize: vertical; min-height: 70px; }
           <div class="card-title">RESULTS</div>
           <div id="marketplace-results">
             <div class="hint" style="color:var(--text-muted);padding:12px 0">Enter a search and hit Search. Or use <code>/skill_install &lt;name-or-url&gt;</code> in Telegram.</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Hermes Lab: budget, semantic memory search, fine-tune, agent improvement -->
+      <div class="page" id="page-hermes-lab">
+        <div class="section-heading">&#129514; Hermes Lab</div>
+        <p class="hint" style="margin-bottom:14px;color:var(--text-muted)">
+          Pannelli sperimentali Hermes: budget mensile, ricerca semantica nelle memorie, stima fine-tuning, proposte di auto-miglioramento degli agenti.
+        </p>
+
+        <div class="card" style="margin-bottom:14px">
+          <div class="card-title" style="display:flex;justify-content:space-between;align-items:center">
+            <span>&#128176; BUDGET MENSILE</span>
+            <button class="btn btn-ghost btn-sm" onclick="loadBudget()">Refresh</button>
+          </div>
+          <div id="budget-content">
+            <div class="chat-thinking" style="padding:8px 0">Loading...</div>
+          </div>
+        </div>
+
+        <div class="card" style="margin-bottom:14px">
+          <div class="card-title">&#128270; RICERCA SEMANTICA NELLE MEMORIE</div>
+          <p style="color:var(--text-muted);font-size:11px;margin:0 0 8px 0">
+            Usa Gemini embeddings (se <code>GOOGLE_API_KEY</code> impostato) o LIKE matching come fallback. Le memorie create dopo l'attivazione embeddings vengono indicizzate automaticamente.
+          </p>
+          <div style="display:flex;gap:8px;align-items:center">
+            <input class="form-input" id="memsearch-q" placeholder='Es. "la mia routine di sport"' style="flex:1" onkeydown="if(event.key==='Enter')runMemSearch()" />
+            <button class="btn" onclick="runMemSearch()">Search</button>
+          </div>
+          <div id="memsearch-results" style="margin-top:10px"></div>
+        </div>
+
+        <div class="card" style="margin-bottom:14px">
+          <div class="card-title" style="display:flex;justify-content:space-between;align-items:center">
+            <span>&#127944; FINE-TUNE ESTIMATE</span>
+            <button class="btn btn-ghost btn-sm" onclick="loadFinetune()">Refresh</button>
+          </div>
+          <div id="finetune-content">
+            <div class="chat-thinking" style="padding:8px 0">Loading...</div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-title" style="display:flex;justify-content:space-between;align-items:center">
+            <span>&#129534; AGENT SELF-IMPROVEMENT</span>
+            <div style="display:flex;gap:6px">
+              <button class="btn btn-sm" onclick="runAgentImproveCycle()">Genera proposte</button>
+              <button class="btn btn-ghost btn-sm" onclick="loadAgentImprove()">Refresh</button>
+            </div>
+          </div>
+          <div id="agent-improve-content">
+            <div class="chat-thinking" style="padding:8px 0">Loading...</div>
           </div>
         </div>
       </div>
@@ -1465,6 +1532,7 @@ const PAGE_TITLES = {
   workflows: 'Workflows',
   reflection: 'Reflection & Digest',
   marketplace: 'Skill Marketplace',
+  'hermes-lab': 'Hermes Lab',
   settings: 'Settings'
 };
 
@@ -1495,6 +1563,7 @@ function navigate(page) {
     case 'workflows': loadWorkflows(); break;
     case 'reflection': loadReflections(); break;
     case 'marketplace': loadTokenJuice(); loadCuratedSkills(); break;
+    case 'hermes-lab': loadHermesLab(); break;
     case 'settings': loadSettings(); loadSecrets(); loadIdentity(); loadProfileEditor('me'); loadImportSources(); loadPersonality(); loadVerbosity(); break;
   }
 }
@@ -4528,6 +4597,152 @@ async function loadCuratedSkills() {
   } catch (err) {
     el.innerHTML = '<div style="color:var(--text-muted)">Failed to load curated list.</div>';
   }
+}
+
+// ─────────────────────────────────────────────
+// Hermes Lab: budget, semantic search, fine-tune, agent self-improvement
+// ─────────────────────────────────────────────
+function loadHermesLab() {
+  loadBudget(); loadFinetune(); loadAgentImprove();
+}
+
+async function loadBudget() {
+  const el = document.getElementById('budget-content');
+  try {
+    const s = await apiFetch('/api/budget');
+    if (!s.enabled) {
+      el.innerHTML =
+        '<div style="color:var(--text-muted)">Budget disabilitato. Imposta <code>MONTHLY_BUDGET_USD</code> in .env per abilitare.</div>' +
+        '<div style="margin-top:6px;font-size:12px">Spesa corrente: $' + (s.spentUsd || 0).toFixed(4) + ' · ' + (s.turns || 0) + ' turni.</div>';
+      return;
+    }
+    const pct = Math.min(100, Math.round((s.ratio || 0) * 100));
+    const colour = s.ratio >= 1 ? '#ef4444' : s.ratio >= 0.8 ? '#f59e0b' : '#22c55e';
+    el.innerHTML =
+      '<div style="display:grid;grid-template-columns:1fr 2fr;gap:14px;align-items:center">' +
+        '<div><b>' + s.monthKey + '</b><br>$' + s.spentUsd.toFixed(4) + ' / $' + s.budgetUsd.toFixed(2) + '<br>' + s.turns + ' turni</div>' +
+        '<div><div style="background:var(--border);border-radius:4px;height:10px;overflow:hidden">' +
+          '<div style="background:' + colour + ';width:' + pct + '%;height:100%"></div>' +
+        '</div><div style="font-size:11px;color:var(--text-muted);margin-top:4px">' + pct + '%</div></div>' +
+      '</div>';
+  } catch (err) {
+    el.innerHTML = '<div style="color:var(--text-muted)">Budget non disponibile.</div>';
+  }
+}
+
+async function runMemSearch() {
+  const q = document.getElementById('memsearch-q').value.trim();
+  const el = document.getElementById('memsearch-results');
+  if (!q) { el.innerHTML = ''; return; }
+  el.innerHTML = '<div class="chat-thinking" style="padding:8px 0">Cerco...</div>';
+  try {
+    const view = await apiFetch('/api/memory-search?q=' + encodeURIComponent(q));
+    const badge = view.semantic ? '<span class="badge badge-purple">🔮 semantic</span>' : '<span class="badge badge-blue">🔤 keyword</span>';
+    if (view.total === 0) {
+      el.innerHTML = badge + '<div style="color:var(--text-muted);padding:8px 0">Nessuna memoria trovata per "' + escHtml(q) + '"</div>';
+      return;
+    }
+    const lines = [badge + ' <b>' + view.total + ' result(s)</b>'];
+    for (const scope of ['user', 'session', 'agent']) {
+      const blocks = view.byScope[scope] || [];
+      if (blocks.length === 0) continue;
+      lines.push('<div style="margin-top:8px;font-size:12px;color:var(--text-dim)"><b>' + scope + '</b></div>');
+      for (const b of blocks.slice(0, 5)) {
+        lines.push('<div style="border-bottom:1px solid var(--border);padding:6px 0;font-size:12px">' +
+          '#' + b.id + ' ' + (b.pinned ? '📌 ' : '') + '<b>' + escHtml(b.topic) + '</b>: ' +
+          escHtml((b.body || '').slice(0, 200)) +
+        '</div>');
+      }
+    }
+    el.innerHTML = lines.join('');
+  } catch (err) {
+    el.innerHTML = '<div style="color:var(--text-muted)">Ricerca fallita: ' + escHtml(err.message) + '</div>';
+  }
+}
+
+async function loadFinetune() {
+  const el = document.getElementById('finetune-content');
+  try {
+    const e = await apiFetch('/api/finetune/estimate?days=30');
+    el.innerHTML =
+      '<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:14px;font-size:13px">' +
+        '<div><b>Coppie</b><br>' + (e.pairCount || 0).toLocaleString() + '</div>' +
+        '<div><b>Train tokens</b><br>' + (e.trainTokens || 0).toLocaleString() + '</div>' +
+        '<div><b>Costo stimato</b><br>$' + (e.estTrainCostUsd || 0).toFixed(2) + '</div>' +
+        '<div><b>Finestra</b><br>' + (e.days || 30) + ' giorni</div>' +
+      '</div>' +
+      '<div style="margin-top:10px;display:flex;gap:8px">' +
+        '<button class="btn btn-sm" onclick="buildFinetuneJsonl()">Crea JSONL</button>' +
+        '<span style="font-size:11px;color:var(--text-muted);align-self:center">L\'invio resta gated da <code>FINETUNE_ENABLED=true</code> in .env</span>' +
+      '</div>';
+  } catch (err) {
+    el.innerHTML = '<div style="color:var(--text-muted)">Stima non disponibile.</div>';
+  }
+}
+async function buildFinetuneJsonl() {
+  toast('Costruisco il JSONL...', 'info');
+  try {
+    const r = await apiFetch('/api/finetune/build', { method: 'POST', body: JSON.stringify({ days: 30 }) });
+    toast(r.pairs + ' coppie scritte in ' + r.outputPath, 'success');
+  } catch (err) {
+    toast('Fallito: ' + err.message, 'error');
+  }
+}
+
+async function loadAgentImprove() {
+  const el = document.getElementById('agent-improve-content');
+  try {
+    const data = await apiFetch('/api/agent-improve');
+    const struggling = data.struggling || [];
+    const proposals = data.pendingProposals || [];
+    let html = '';
+    if (struggling.length > 0) {
+      html += '<div style="font-size:12px;margin-bottom:8px;color:var(--text-muted)"><b>Agent in difficoltà (7g):</b></div>';
+      for (const s of struggling) {
+        const pct = Math.round((s.failureRate || 0) * 100);
+        html += '<div style="font-size:12px;padding:4px 0">• <b>' + escHtml(s.agentId) + '</b> — ' + pct + '% fail (' + s.failedTasks + '/' + s.totalTasks + ')</div>';
+      }
+    } else {
+      html += '<div style="color:var(--text-muted);font-size:12px;padding:4px 0">Nessun agente in difficoltà negli ultimi 7 giorni.</div>';
+    }
+    if (proposals.length > 0) {
+      html += '<div style="font-size:12px;margin:10px 0 6px 0;color:var(--text-muted)"><b>Proposte pendenti:</b></div>';
+      for (const p of proposals) {
+        html += '<div style="border-bottom:1px solid var(--border);padding:8px 0">' +
+          '<b>' + escHtml(p.agentId) + '</b>' +
+          '<pre style="font-size:11px;margin:4px 0;max-height:120px;overflow:auto">' + escHtml(p.diffPreview.slice(0, 300)) + '</pre>' +
+          '<div style="display:flex;gap:6px">' +
+            '<button class="btn btn-sm" onclick="acceptAgentProposalUi(\\'' + escHtml(p.proposalPath) + '\\',\\'' + escHtml(p.agentId) + '\\')">Accetta</button>' +
+            '<button class="btn btn-ghost btn-sm" onclick="discardAgentProposalUi(\\'' + escHtml(p.proposalPath) + '\\')">Scarta</button>' +
+          '</div>' +
+        '</div>';
+      }
+    }
+    el.innerHTML = html;
+  } catch (err) {
+    el.innerHTML = '<div style="color:var(--text-muted)">Non disponibile.</div>';
+  }
+}
+async function runAgentImproveCycle() {
+  toast('Genero proposte (può richiedere alcuni minuti)...', 'info');
+  try {
+    const r = await apiFetch('/api/agent-improve/run', { method: 'POST' });
+    toast((r.proposals || []).length + ' proposta/e generata/e', 'success');
+    loadAgentImprove();
+  } catch (err) { toast('Fallito: ' + err.message, 'error'); }
+}
+async function acceptAgentProposalUi(proposalPath, agentId) {
+  try {
+    const r = await apiFetch('/api/agent-improve/accept', { method: 'POST', body: JSON.stringify({ proposalPath, agentId }) });
+    toast(r.ok ? 'Accettata (backup salvato)' : ('Fallito: ' + (r.reason || 'unknown')), r.ok ? 'success' : 'error');
+    loadAgentImprove();
+  } catch (err) { toast('Fallito: ' + err.message, 'error'); }
+}
+async function discardAgentProposalUi(proposalPath) {
+  try {
+    await apiFetch('/api/agent-improve/discard', { method: 'POST', body: JSON.stringify({ proposalPath }) });
+    loadAgentImprove();
+  } catch (err) { toast('Fallito: ' + err.message, 'error'); }
 }
 
 async function loadMarketplace() {

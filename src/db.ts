@@ -303,6 +303,7 @@ function createSchema(database: Database.Database): void {
     -- Memory blocks: Mem0-style scoped + Letta-style editable.
     -- scope: 'user' (persistent, identity-level) | 'session' (conversation-local) | 'agent' (per-agent specialization)
     -- editable: 0 = derived from kernel files (read-only mirror), 1 = user/agent editable
+    -- attachments: JSON array of {kind, path, caption?} for multi-modal memories
     CREATE TABLE IF NOT EXISTS memory_blocks (
       id          INTEGER PRIMARY KEY AUTOINCREMENT,
       scope       TEXT NOT NULL,
@@ -313,6 +314,7 @@ function createSchema(database: Database.Database): void {
       pinned      INTEGER NOT NULL DEFAULT 0,
       importance  REAL NOT NULL DEFAULT 0.5,
       embedding   BLOB,
+      attachments TEXT NOT NULL DEFAULT '[]',
       created_at  INTEGER NOT NULL,
       updated_at  INTEGER NOT NULL
     );
@@ -566,6 +568,14 @@ function runMigrations(database: Database.Database): void {
   if (!taskColNames.includes('last_status')) {
     database.exec(`ALTER TABLE scheduled_tasks ADD COLUMN last_status TEXT`);
   }
+
+  // Hermes: memory_blocks.attachments (multi-modal memories)
+  try {
+    const mbCols = database.prepare(`PRAGMA table_info(memory_blocks)`).all() as Array<{ name: string }>;
+    if (mbCols.length > 0 && !mbCols.some((c) => c.name === 'attachments')) {
+      database.exec(`ALTER TABLE memory_blocks ADD COLUMN attachments TEXT NOT NULL DEFAULT '[]'`);
+    }
+  } catch { /* memory_blocks not created yet on first boot */ }
 
   // ── Memory V2 migration ──────────────────────────────────────────────
   // Detect old schema (has 'sector' column but no 'importance') and migrate.

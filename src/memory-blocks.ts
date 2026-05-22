@@ -17,8 +17,18 @@
 
 import { getDb } from './db.js';
 import { logger } from './logger.js';
+import { embed, embeddingToBuffer, bufferToEmbedding, cosine, embeddingsAvailable } from './embeddings-gemini.js';
 
 export type Scope = 'user' | 'session' | 'agent';
+
+export interface MemoryAttachment {
+  /** image | audio | video | file */
+  kind: string;
+  /** Absolute filesystem path (typically under USER_DATA_DIR/uploads/). */
+  path: string;
+  /** Optional human-readable caption (e.g. vision OCR or user note). */
+  caption?: string;
+}
 
 export interface MemoryBlock {
   id: number;
@@ -30,6 +40,7 @@ export interface MemoryBlock {
   pinned: boolean;
   importance: number;
   embedding: Buffer | null;
+  attachments: MemoryAttachment[];
   created_at: number;
   updated_at: number;
 }
@@ -44,11 +55,16 @@ interface RawRow {
   pinned: number;
   importance: number;
   embedding: Buffer | null;
+  attachments: string | null;
   created_at: number;
   updated_at: number;
 }
 
 function rowToBlock(r: RawRow): MemoryBlock {
+  let attachments: MemoryAttachment[] = [];
+  if (r.attachments) {
+    try { attachments = JSON.parse(r.attachments) as MemoryAttachment[]; } catch { /* */ }
+  }
   return {
     id: r.id,
     scope: r.scope as Scope,
@@ -59,9 +75,51 @@ function rowToBlock(r: RawRow): MemoryBlock {
     pinned: r.pinned === 1,
     importance: r.importance,
     embedding: r.embedding,
+    attachments,
     created_at: r.created_at,
     updated_at: r.updated_at,
   };
+}
+
+/**
+ * Attach a file (image / audio / video / generic) to an existing memory block.
+ * For image attachments, lazily generate a caption via the Vision MCP (if
+ * ANTHROPIC_API_KEY is configured) and append it to the block body so semantic
+ * search can find the memory by the image's content.
+ */
+export async function attachToBlock(
+  id: number,
+  attachment: MemoryAttachment,
+): Promise<MemoryBlock | null> {
+  const b = getById(id);
+  if (!b) return null;
+  if (!b.editable) throw new Error(`Block ${id} not editable`);
+  const next = [...b.attachments, attachment];
+
+  let bodyAddition = '';
+  if (attachment.kind === 'image' && !attachment.caption) {
+    // Best-effort vision caption. Doesn't block the attach if it fails.
+    try {
+      const { runVisionDescribe } = await import('./tools/vision-helper.js');
+      const caption = await runVisionDescribe(attachment.path);
+      if (caption) {
+        attachment.caption = caption;
+        bodyAddition = `\n[image: ${caption}]`;
+      }
+    } catch (err) {
+      logger.warn({ err, id, path: attachment.path }, 'attachToBlock: vision caption failed');
+    }
+  }
+
+  getDb().prepare(
+    `UPDATE memory_blocks SET attachments = ?, body = ?, updated_at = ? WHERE id = ?`,
+  ).run(JSON.stringify(next), b.body + bodyAddition, Date.now(), id);
+
+  // Re-embed since body changed
+  if (bodyAddition && embeddingsAvailable()) {
+    embedBlock(id).catch(() => {});
+  }
+  return getById(id);
 }
 
 // ── CRUD ─────────────────────────────────────────────────────────────
@@ -90,7 +148,33 @@ export function createBlock(opts: {
     now,
     now,
   );
-  return getById(Number(info.lastInsertRowid))!;
+  const id = Number(info.lastInsertRowid);
+  // Fire-and-forget embedding generation. Block stays usable immediately;
+  // semantic search just kicks in once the embedding lands.
+  if (embeddingsAvailable()) {
+    embed(`${opts.topic}\n${opts.body}`)
+      .then((vec) => {
+        if (vec) {
+          try {
+            getDb().prepare(`UPDATE memory_blocks SET embedding = ? WHERE id = ?`)
+              .run(embeddingToBuffer(vec), id);
+          } catch (err) { logger.warn({ err, id }, 'memory-block embedding update failed'); }
+        }
+      })
+      .catch((err) => logger.warn({ err, id }, 'memory-block embed exception'));
+  }
+  return getById(id)!;
+}
+
+/** Manually (re-)embed a block. Useful after updateBlock. */
+export async function embedBlock(id: number): Promise<boolean> {
+  const b = getById(id);
+  if (!b) return false;
+  const vec = await embed(`${b.topic}\n${b.body}`);
+  if (!vec) return false;
+  getDb().prepare(`UPDATE memory_blocks SET embedding = ? WHERE id = ?`)
+    .run(embeddingToBuffer(vec), id);
+  return true;
 }
 
 export function getById(id: number): MemoryBlock | null {
@@ -192,6 +276,58 @@ export function introspect(query: string, limit = 50): KnowledgeView {
   };
 }
 
+/**
+ * Semantic search across memory_blocks. Combines:
+ *   1. Embedding-based cosine similarity (when GOOGLE_API_KEY is set)
+ *   2. Keyword LIKE matching as fallback / supplement
+ *
+ * Returns blocks ranked by relevance.
+ */
+export async function introspectSemantic(query: string, limit = 20): Promise<KnowledgeView & { semantic: boolean }> {
+  if (!embeddingsAvailable()) {
+    const view = introspect(query, limit);
+    return { ...view, semantic: false };
+  }
+  const queryVec = await embed(query);
+  if (!queryVec) {
+    const view = introspect(query, limit);
+    return { ...view, semantic: false };
+  }
+
+  // Load all blocks with embeddings + score
+  const rows = getDb().prepare(
+    `SELECT * FROM memory_blocks WHERE embedding IS NOT NULL`,
+  ).all() as RawRow[];
+
+  const scored: Array<{ block: MemoryBlock; score: number }> = [];
+  for (const r of rows) {
+    if (!r.embedding) continue;
+    const v = bufferToEmbedding(r.embedding);
+    if (!v) continue;
+    const score = cosine(queryVec, v);
+    scored.push({ block: rowToBlock(r), score });
+  }
+  scored.sort((a, b) => b.score - a.score);
+  // Threshold: keep results with cosine >= 0.55 (empirical floor for "related")
+  const top = scored.filter((s) => s.score >= 0.55).slice(0, limit).map((s) => s.block);
+
+  // Backfill with keyword matches the embedding might have missed
+  const kw = searchByText(query, Math.max(0, limit - top.length));
+  const ids = new Set(top.map((b) => b.id));
+  for (const b of kw) if (!ids.has(b.id)) top.push(b);
+
+  return {
+    query,
+    total: top.length,
+    byScope: {
+      user: top.filter((b) => b.scope === 'user'),
+      session: top.filter((b) => b.scope === 'session'),
+      agent: top.filter((b) => b.scope === 'agent'),
+    },
+    semantic: true,
+  };
+}
+
 // ── Targeted forgetting ──────────────────────────────────────────────
 
 /**
@@ -233,12 +369,13 @@ export function registerMemoryBlockCommands(
       return;
     }
     const query = q.replace(/^about\s+/i, '').trim();
-    const view = introspect(query);
+    const view = await introspectSemantic(query);
     if (view.total === 0) {
       await ctx.reply(`Nothing recorded about "${query}".`);
       return;
     }
-    const lines: string[] = [`<b>Knowledge view: ${escapeHtml(query)}</b> (${view.total} block(s))`];
+    const semBadge = view.semantic ? ' 🔮 semantic' : ' 🔤 keyword';
+    const lines: string[] = [`<b>Knowledge view: ${escapeHtml(query)}</b> (${view.total} block(s))${semBadge}`];
     for (const scope of ['user', 'session', 'agent'] as const) {
       const blocks = view.byScope[scope];
       if (blocks.length === 0) continue;
