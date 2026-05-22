@@ -68,6 +68,14 @@ const execMod = await import(dist('tools/execute-code.js'));
 const synthesisMod = await import(dist('skill-synthesis.js'));
 const exportMod = await import(dist('trajectory-export.js'));
 const importMod = await import(dist('skill-import.js'));
+const memoryBlocksMod = await import(dist('memory-blocks.js'));
+const traceMod = await import(dist('trace-inspector.js'));
+const evalsMod = await import(dist('evals.js'));
+const workflowsMod = await import(dist('workflows.js'));
+const reflectionMod = await import(dist('reflection.js'));
+const digestMod = await import(dist('digest.js'));
+const moodsMod = await import(dist('moods.js'));
+const litestreamMod = await import(dist('sync/litestream.js'));
 
 // ── Schema ───────────────────────────────────────────────────────────
 
@@ -460,6 +468,190 @@ await test('ACP: initialize + session/new round-trip', async () => {
   assert(init?.result?.serverInfo?.name === 'wildclaude-acp', 'bad ACP initialize');
   assert(typeof newSession?.result?.sessionId === 'string', `bad session/new: ${JSON.stringify(newSession)}`);
   assertEq(unknown?.error?.code, -32601, 'unknown method should be -32601');
+});
+
+// ── New Hermes-feature schema ────────────────────────────────────────
+
+section('phase2-schema');
+const newTables = ['memory_blocks', 'evals', 'eval_runs', 'workflows', 'workflow_runs', 'reflections', 'digests', 'mood_log'];
+for (const t of newTables) {
+  await test(`${t} table exists`, () => {
+    const row = getDb().prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name=?`).get(t);
+    assert(row, `${t} not found`);
+  });
+}
+
+// ── Memory blocks ────────────────────────────────────────────────────
+
+section('memory-blocks');
+
+await test('createBlock + getById round-trip', () => {
+  const b = memoryBlocksMod.createBlock({
+    scope: 'user', topic: 'TEST-mb-' + Date.now(), body: 'lorem ipsum',
+    importance: 0.7, pinned: false,
+  });
+  assert(b.id > 0, 'no id');
+  const fetched = memoryBlocksMod.getById(b.id);
+  assertEq(fetched.body, 'lorem ipsum', 'body');
+  assert(fetched.editable, 'editable default');
+});
+
+await test('updateBlock rejects non-editable', () => {
+  const b = memoryBlocksMod.createBlock({
+    scope: 'user', topic: 'TEST-mb-ro', body: 'frozen', editable: false,
+  });
+  let threw = false;
+  try { memoryBlocksMod.updateBlock(b.id, { body: 'changed' }); }
+  catch { threw = true; }
+  assert(threw, 'should have thrown');
+});
+
+await test('introspect groups by scope', () => {
+  const tag = 'TEST-mb-introspect-' + Date.now();
+  memoryBlocksMod.createBlock({ scope: 'user', topic: tag, body: 'in user scope ' + tag });
+  memoryBlocksMod.createBlock({ scope: 'session', topic: tag, body: 'in session scope ' + tag });
+  const view = memoryBlocksMod.introspect(tag);
+  assert(view.byScope.user.length >= 1, 'user scope missing');
+  assert(view.byScope.session.length >= 1, 'session scope missing');
+});
+
+await test('forgetTopic deletes editable blocks', () => {
+  const tag = 'TEST-mb-forget-' + Date.now();
+  memoryBlocksMod.createBlock({ scope: 'user', topic: tag, body: tag + ' delete me' });
+  const r = memoryBlocksMod.forgetTopic(tag);
+  assert(r.blocksDeleted >= 1, 'no blocks deleted');
+  const after = memoryBlocksMod.introspect(tag);
+  assertEq(after.total, 0, 'still present');
+});
+
+// ── Trace inspector ──────────────────────────────────────────────────
+
+section('trace-inspector');
+
+await test('listRecentSessions returns an array', () => {
+  const sessions = traceMod.listRecentSessions(5);
+  assert(Array.isArray(sessions), 'not an array');
+});
+
+await test('getCostBreakdown returns shape', () => {
+  const b = traceMod.getCostBreakdown(30);
+  assert(typeof b.totalCostUsd === 'number', 'totalCostUsd');
+  assert(Array.isArray(b.byAgent), 'byAgent array');
+  assert(Array.isArray(b.byDay), 'byDay array');
+});
+
+// ── Evals ────────────────────────────────────────────────────────────
+
+section('evals');
+
+await test('listEvalFiles returns array', () => {
+  const files = evalsMod.listEvalFiles();
+  assert(Array.isArray(files), 'not array');
+});
+
+await test('listRecentRuns returns array', () => {
+  const runs = evalsMod.listRecentRuns(5);
+  assert(Array.isArray(runs), 'not array');
+});
+
+// ── Workflows ────────────────────────────────────────────────────────
+
+section('workflows');
+
+await test('loadWorkflow validates frontmatter + DAG', () => {
+  const tmp = path.join('/tmp', 'wf-test-' + Date.now() + '.yaml');
+  fs.writeFileSync(tmp, [
+    'name: test-workflow',
+    'steps:',
+    '  - id: a',
+    '    telegram: "hello from a"',
+    '  - id: b',
+    '    depends_on: [a]',
+    '    telegram: "follow-up b ({{ a.output }})"',
+  ].join('\n'));
+  const def = workflowsMod.loadWorkflow(tmp);
+  assertEq(def.name, 'test-workflow', 'name');
+  assertEq(def.steps.length, 2, 'step count');
+  fs.unlinkSync(tmp);
+});
+
+await test('loadWorkflow rejects cycles', () => {
+  const tmp = path.join('/tmp', 'wf-cycle-' + Date.now() + '.yaml');
+  fs.writeFileSync(tmp, [
+    'name: cycle',
+    'steps:',
+    '  - id: a',
+    '    depends_on: [b]',
+    '    prompt: "noop"',
+    '  - id: b',
+    '    depends_on: [a]',
+    '    prompt: "noop"',
+  ].join('\n'));
+  let threw = false;
+  try { workflowsMod.loadWorkflow(tmp); } catch { threw = true; }
+  assert(threw, 'cycle not detected');
+  fs.unlinkSync(tmp);
+});
+
+await test('runWorkflow executes telegram-only steps without LLM calls', async () => {
+  const tmp = path.join('/tmp', 'wf-tg-' + Date.now() + '.yaml');
+  fs.writeFileSync(tmp, [
+    'name: tg-only',
+    'steps:',
+    '  - id: a',
+    '    telegram: "first"',
+    '  - id: b',
+    '    depends_on: [a]',
+    '    telegram: "second after {{ a.output }}"',
+  ].join('\n'));
+  const def = workflowsMod.loadWorkflow(tmp);
+  const messages = [];
+  const run = await workflowsMod.runWorkflow(def, { telegram: (t) => messages.push(t) });
+  assertEq(run.status, 'completed', 'status');
+  assertEq(messages.length, 2, 'two messages sent');
+  assert(messages[1].includes('first'), 'interpolation failed: ' + messages[1]);
+  fs.unlinkSync(tmp);
+});
+
+// ── Reflection / Digest / Moods ──────────────────────────────────────
+
+section('reflection-digest-moods');
+
+await test('listReflections returns array', () => {
+  const r = reflectionMod.listReflections(5);
+  assert(Array.isArray(r), 'not array');
+});
+
+await test('computeDigest produces metrics for last day', () => {
+  const now = Date.now();
+  const d = digestMod.computeDigest(now - 24 * 3600 * 1000, now);
+  assert(d.body.includes('Turns:'), 'body missing turns: ' + d.body);
+  assert(typeof d.metrics.costUsd === 'number', 'costUsd');
+});
+
+await test('detectMood returns valid mood for noon weekday', () => {
+  const m = moodsMod.detectMood({}, new Date('2026-05-20T12:00:00')); // Wed noon
+  assertEq(m, 'work', 'expected work, got ' + m);
+});
+
+await test('detectMood returns weekend for Saturday', () => {
+  const m = moodsMod.detectMood({}, new Date('2026-05-23T12:00:00')); // Sat
+  assertEq(m, 'weekend', 'expected weekend, got ' + m);
+});
+
+await test('detectMood honours inFocus override', () => {
+  const m = moodsMod.detectMood({ inFocus: true }, new Date('2026-05-20T12:00:00'));
+  assertEq(m, 'focus', 'expected focus override');
+});
+
+// ── Sync scaffold ────────────────────────────────────────────────────
+
+section('sync');
+
+await test('buildConfig produces parseable yaml', () => {
+  const yamlSrc = litestreamMod.buildConfig({ bucket: 'test-bucket', region: 'auto' });
+  assert(yamlSrc.includes('bucket: test-bucket'), 'no bucket: ' + yamlSrc);
+  assert(yamlSrc.includes('wild-claude.db'), 'no db path');
 });
 
 // ── Summary ──────────────────────────────────────────────────────────
