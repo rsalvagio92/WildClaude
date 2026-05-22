@@ -375,6 +375,26 @@ textarea.form-input { resize: vertical; min-height: 70px; }
         <span class="nav-icon">&#128308;</span>
         <span class="nav-label">Live Activity</span>
       </div>
+      <div class="nav-item" data-page="traces" onclick="navigate('traces')">
+        <span class="nav-icon">&#128269;</span>
+        <span class="nav-label">Trace Inspector</span>
+      </div>
+      <div class="nav-item" data-page="evals" onclick="navigate('evals')">
+        <span class="nav-icon">&#9989;</span>
+        <span class="nav-label">Evals</span>
+      </div>
+      <div class="nav-item" data-page="workflows" onclick="navigate('workflows')">
+        <span class="nav-icon">&#128279;</span>
+        <span class="nav-label">Workflows</span>
+      </div>
+      <div class="nav-item" data-page="reflection" onclick="navigate('reflection')">
+        <span class="nav-icon">&#129504;</span>
+        <span class="nav-label">Reflection</span>
+      </div>
+      <div class="nav-item" data-page="marketplace" onclick="navigate('marketplace')">
+        <span class="nav-icon">&#128722;</span>
+        <span class="nav-label">Skill Marketplace</span>
+      </div>
       <div class="nav-item" data-page="settings" onclick="navigate('settings')">
         <span class="nav-icon">&#9881;</span><span class="nav-label">Settings</span>
       </div>
@@ -736,6 +756,149 @@ textarea.form-input { resize: vertical; min-height: 70px; }
           <div class="card-title">AGENT DELEGATION HISTORY</div>
           <div id="hivemind-content">
             <div class="chat-thinking" style="padding:12px 0">Loading...</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Hermes Tier 1: Trace Inspector -->
+      <div class="page" id="page-traces">
+        <div class="section-heading">&#128269; Trace Inspector</div>
+
+        <div class="card" style="margin-bottom:14px">
+          <div class="card-title" style="display:flex;justify-content:space-between;align-items:center">
+            <span>COST BREAKDOWN (last 30 days)</span>
+            <button class="btn btn-ghost btn-sm" onclick="loadTraces()">Refresh</button>
+          </div>
+          <div id="cost-breakdown-content">
+            <div class="chat-thinking" style="padding:12px 0">Loading...</div>
+          </div>
+        </div>
+
+        <div class="card" style="margin-bottom:14px">
+          <div class="card-title">RECENT SESSIONS</div>
+          <div id="traces-list" style="max-height:400px;overflow-y:auto">
+            <div class="chat-thinking" style="padding:12px 0">Loading...</div>
+          </div>
+        </div>
+
+        <div class="card" id="trace-detail-card" style="display:none">
+          <div class="card-title" style="display:flex;justify-content:space-between;align-items:center">
+            <span id="trace-detail-title">SESSION DETAIL</span>
+            <button class="btn btn-ghost btn-sm" onclick="closeTraceDetail()">Close</button>
+          </div>
+          <div id="trace-detail-content" style="max-height:600px;overflow-y:auto"></div>
+        </div>
+      </div>
+
+      <!-- Hermes Tier 1: Evals -->
+      <div class="page" id="page-evals">
+        <div class="section-heading">&#9989; Evaluation Framework</div>
+        <p class="hint" style="margin-bottom:14px;color:var(--text-muted)">
+          Declarative test cases for agent behavior. Drop YAML files in <code>~/.wild-claude-pi/evals/</code> and run them on demand. Each case grades the response against contains / not_contains / tools / length expectations.
+        </p>
+
+        <div class="card" style="margin-bottom:14px">
+          <div class="card-title" style="display:flex;justify-content:space-between;align-items:center">
+            <span>AVAILABLE EVALS</span>
+            <button class="btn btn-ghost btn-sm" onclick="loadEvals()">Refresh</button>
+          </div>
+          <div id="evals-list">
+            <div class="chat-thinking" style="padding:12px 0">Loading...</div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-title">RECENT RUNS</div>
+          <div id="eval-runs-list">
+            <div class="chat-thinking" style="padding:12px 0">Loading...</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Hermes Tier 3: Workflows -->
+      <div class="page" id="page-workflows">
+        <div class="section-heading">&#128279; Declarative Workflows</div>
+        <p class="hint" style="margin-bottom:14px;color:var(--text-muted)">
+          State-graph workflows defined in <code>~/.wild-claude-pi/workflows/*.yaml</code>. Each step is a prompt to an agent (or a telegram notification). Steps run in topological order, support <code>&#123;&#123; stepId.output &#125;&#125;</code> interpolation, and runs are resumable.
+        </p>
+
+        <div class="card" style="margin-bottom:14px">
+          <div class="card-title" style="display:flex;justify-content:space-between;align-items:center">
+            <span>AVAILABLE WORKFLOWS</span>
+            <button class="btn btn-ghost btn-sm" onclick="loadWorkflows()">Refresh</button>
+          </div>
+          <div id="workflows-list">
+            <div class="chat-thinking" style="padding:12px 0">Loading...</div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-title">RECENT RUNS</div>
+          <div id="workflow-runs-list">
+            <div class="chat-thinking" style="padding:12px 0">Loading...</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Hermes Tier 5: Reflection + Digest -->
+      <div class="page" id="page-reflection">
+        <div class="section-heading">&#129504; Reflection &amp; Digest</div>
+
+        <div class="card" style="margin-bottom:14px">
+          <div class="card-title" style="display:flex;justify-content:space-between;align-items:center">
+            <span>GENERATE REFLECTION</span>
+            <div style="display:flex;gap:6px">
+              <button class="btn btn-sm" onclick="generateReflection('day')">Today</button>
+              <button class="btn btn-sm" onclick="generateReflection('week')">This week</button>
+            </div>
+          </div>
+          <p class="hint" style="color:var(--text-muted);font-size:12px;margin:0">
+            Generates a Haiku-drafted summary + up to 3 emergent patterns from recent conversation, tool sequences, memories, and tasks.
+          </p>
+        </div>
+
+        <div class="card" style="margin-bottom:14px">
+          <div class="card-title" style="display:flex;justify-content:space-between;align-items:center">
+            <span>DIGEST</span>
+            <div style="display:flex;gap:6px">
+              <button class="btn btn-sm" onclick="loadDigest('day')">Day</button>
+              <button class="btn btn-sm" onclick="loadDigest('week')">Week</button>
+              <button class="btn btn-sm" onclick="loadDigest('month')">Month</button>
+            </div>
+          </div>
+          <pre id="digest-content" style="margin:0;font-family:monospace;font-size:12px;white-space:pre-wrap;color:var(--text-dim)">Pick a period above.</pre>
+        </div>
+
+        <div class="card">
+          <div class="card-title" style="display:flex;justify-content:space-between;align-items:center">
+            <span>RECENT REFLECTIONS</span>
+            <button class="btn btn-ghost btn-sm" onclick="loadReflections()">Refresh</button>
+          </div>
+          <div id="reflections-list">
+            <div class="chat-thinking" style="padding:12px 0">Loading...</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Hermes Tier 4: Skill Marketplace -->
+      <div class="page" id="page-marketplace">
+        <div class="section-heading">&#128722; Skill Marketplace</div>
+        <p class="hint" style="margin-bottom:14px;color:var(--text-muted)">
+          Browse community skills from agentskills.io. Install with one click — Python scriptlets are stripped, and you preview the SKILL.md before it lands in <code>~/.wild-claude-pi/skills/</code>.
+        </p>
+
+        <div class="card" style="margin-bottom:14px">
+          <div class="card-title">SEARCH</div>
+          <div style="display:flex;gap:8px;align-items:center">
+            <input class="form-input" id="marketplace-search" placeholder="e.g. notion, git, finance" style="flex:1" onkeydown="if(event.key==='Enter')loadMarketplace()" />
+            <button class="btn" onclick="loadMarketplace()">Search</button>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-title">RESULTS</div>
+          <div id="marketplace-results">
+            <div class="hint" style="color:var(--text-muted);padding:12px 0">Enter a search and hit Search. Or use <code>/skill_install &lt;name-or-url&gt;</code> in Telegram.</div>
           </div>
         </div>
       </div>
@@ -1277,6 +1440,11 @@ const PAGE_TITLES = {
   dashboards: 'Dashboards',
   files: 'File Explorer',
   activity: 'Live Activity',
+  traces: 'Trace Inspector',
+  evals: 'Evals',
+  workflows: 'Workflows',
+  reflection: 'Reflection & Digest',
+  marketplace: 'Skill Marketplace',
   settings: 'Settings'
 };
 
@@ -1302,6 +1470,11 @@ function navigate(page) {
     case 'dashboards': loadDashboardServices(); break;
     case 'files': loadFileExplorer(); break;
     case 'activity': loadAuditLog(); loadHiveMind(); break;
+    case 'traces': loadTraces(); break;
+    case 'evals': loadEvals(); break;
+    case 'workflows': loadWorkflows(); break;
+    case 'reflection': loadReflections(); break;
+    case 'marketplace': /* user-initiated */ break;
     case 'settings': loadSettings(); loadSecrets(); loadIdentity(); loadProfileEditor('me'); loadImportSources(); loadPersonality(); loadVerbosity(); break;
   }
 }
@@ -4084,6 +4257,236 @@ async function loadHiveMind() {
     '</div>';
   } catch(err) {
     container.innerHTML = '<div style="color:var(--text-muted);font-size:13px">Hive mind not available.</div>';
+  }
+}
+
+// ─────────────────────────────────────────────
+// Hermes Tier 1: Trace Inspector
+// ─────────────────────────────────────────────
+async function loadTraces() {
+  const costEl = document.getElementById('cost-breakdown-content');
+  const listEl = document.getElementById('traces-list');
+  try {
+    const cost = await apiFetch('/api/cost-breakdown?days=30');
+    const byAgent = cost.byAgent || [];
+    costEl.innerHTML =
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">' +
+        '<div><b>Total</b><br>Cost: $' + (cost.totalCostUsd || 0).toFixed(4) + '<br>Turns: ' + (cost.totalTurns || 0) + '</div>' +
+        '<div><b>By agent</b>' +
+          (byAgent.length === 0
+            ? '<div style="color:var(--text-muted)">No usage yet.</div>'
+            : byAgent.map(a => '<div style="font-size:12px">' + escHtml(a.agentId) + ': $' + a.costUsd.toFixed(4) + ' (' + a.turns + ' turns)</div>').join('')) +
+        '</div>' +
+      '</div>';
+
+    const data = await apiFetch('/api/traces?limit=25');
+    const sessions = data.sessions || [];
+    if (sessions.length === 0) {
+      listEl.innerHTML = '<div style="color:var(--text-muted);padding:8px">No sessions yet.</div>';
+      return;
+    }
+    listEl.innerHTML = sessions.map(s => {
+      const dur = s.lastActivity - s.startedAt;
+      return '<div style="border-bottom:1px solid var(--border);padding:8px 0;cursor:pointer" onclick="openTraceDetail(\\'' + escHtml(s.sessionId) + '\\')">' +
+        '<div style="display:flex;justify-content:space-between"><span><span class="badge badge-blue">' + escHtml(s.agentId) + '</span> ' + escHtml(s.sessionId.slice(0, 16)) + '…</span>' +
+        '<span style="color:var(--text-dim);font-size:11px">' + new Date(s.startedAt).toLocaleString() + '</span></div>' +
+        '<div style="font-size:11px;color:var(--text-muted);margin-top:3px">' +
+          'Turns: ' + s.totals.turnCount + ' · Cost: $' + (s.totals.costUsd || 0).toFixed(4) + ' · Cache hits: ' + (s.totals.cacheRead || 0) + ' · Duration: ' + Math.round(dur / 1000) + 's' +
+        '</div></div>';
+    }).join('');
+  } catch (err) {
+    listEl.innerHTML = '<div style="color:var(--text-muted)">Failed to load traces.</div>';
+  }
+}
+
+async function openTraceDetail(sessionId) {
+  const card = document.getElementById('trace-detail-card');
+  const title = document.getElementById('trace-detail-title');
+  const content = document.getElementById('trace-detail-content');
+  card.style.display = 'block';
+  title.textContent = 'SESSION ' + sessionId.slice(0, 24) + '…';
+  content.innerHTML = '<div class="chat-thinking" style="padding:12px 0">Loading...</div>';
+  try {
+    const trace = await apiFetch('/api/traces/' + encodeURIComponent(sessionId));
+    content.innerHTML = trace.turns.map(t => {
+      const usage = t.usage ? ' · in=' + t.usage.inputTokens + ' out=' + t.usage.outputTokens + ' cache=' + t.usage.cacheRead + ' $' + (t.usage.costUsd || 0).toFixed(4) : '';
+      return '<div style="border-left:3px solid ' + (t.role === 'user' ? 'var(--accent)' : 'var(--text-dim)') + ';padding:6px 12px;margin:8px 0">' +
+        '<div style="font-size:11px;color:var(--text-dim)">' + escHtml(t.role) + ' · ' + new Date(t.created_at).toLocaleString() + usage + '</div>' +
+        '<div style="white-space:pre-wrap;font-size:12px;margin-top:4px">' + escHtml((t.content || '').slice(0, 1500)) + '</div>' +
+      '</div>';
+    }).join('');
+  } catch (err) {
+    content.innerHTML = '<div style="color:var(--text-muted)">Trace not found.</div>';
+  }
+}
+function closeTraceDetail() {
+  document.getElementById('trace-detail-card').style.display = 'none';
+}
+
+// ─────────────────────────────────────────────
+// Hermes Tier 1: Evals
+// ─────────────────────────────────────────────
+async function loadEvals() {
+  const listEl = document.getElementById('evals-list');
+  const runsEl = document.getElementById('eval-runs-list');
+  try {
+    const data = await apiFetch('/api/evals');
+    const evals = data.evals || [];
+    listEl.innerHTML = evals.length === 0
+      ? '<div style="color:var(--text-muted);padding:8px">No evals. Drop a YAML in ~/.wild-claude-pi/evals/</div>'
+      : evals.map(e => {
+          if (e.error) return '<div style="border-bottom:1px solid var(--border);padding:8px 0;color:var(--text-muted)">' + escHtml(e.file) + ' — ' + escHtml(e.error) + '</div>';
+          return '<div style="display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid var(--border);padding:8px 0">' +
+            '<div><b>' + escHtml(e.name) + '</b><div style="font-size:11px;color:var(--text-muted)">' + (e.caseCount || 0) + ' case(s) · ' + escHtml(e.file) + '</div></div>' +
+            '<button class="btn btn-sm" onclick="runEvalByName(\\'' + escHtml(e.name) + '\\')">Run</button>' +
+          '</div>';
+        }).join('');
+    const runs = data.runs || [];
+    runsEl.innerHTML = runs.length === 0
+      ? '<div style="color:var(--text-muted);padding:8px">No runs yet.</div>'
+      : runs.map(r => '<div style="border-bottom:1px solid var(--border);padding:6px 0;font-size:12px">' +
+          '<span class="badge ' + (r.score === 1 ? 'badge-green' : r.score === 0 ? 'badge-red' : 'badge-yellow') + '">' + r.passed + '/' + r.total + '</span> ' +
+          escHtml(r.evalId) + ' · ' + new Date(r.startedAt).toLocaleString() +
+        '</div>').join('');
+  } catch (err) {
+    listEl.innerHTML = '<div style="color:var(--text-muted)">Failed to load.</div>';
+  }
+}
+async function runEvalByName(name) {
+  toast('Running eval "' + name + '"…', 'info');
+  try {
+    const r = await apiFetch('/api/evals/run/' + encodeURIComponent(name), { method: 'POST' });
+    toast('Eval done: ' + r.passed + '/' + r.total + ' passed', r.score === 1 ? 'success' : 'warning');
+    loadEvals();
+  } catch (err) {
+    toast('Eval failed: ' + err.message, 'error');
+  }
+}
+
+// ─────────────────────────────────────────────
+// Hermes Tier 3: Workflows (declarative DAGs)
+// ─────────────────────────────────────────────
+async function loadWorkflows() {
+  const listEl = document.getElementById('workflows-list');
+  const runsEl = document.getElementById('workflow-runs-list');
+  try {
+    const data = await apiFetch('/api/workflows');
+    const workflows = data.workflows || [];
+    listEl.innerHTML = workflows.length === 0
+      ? '<div style="color:var(--text-muted);padding:8px">No workflows. Drop YAML in ~/.wild-claude-pi/workflows/</div>'
+      : workflows.map(w => {
+          if (w.error) return '<div style="border-bottom:1px solid var(--border);padding:8px 0;color:var(--text-muted)">' + escHtml(w.file) + ' — ' + escHtml(w.error) + '</div>';
+          return '<div style="display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid var(--border);padding:8px 0">' +
+            '<div><b>' + escHtml(w.name) + '</b><div style="font-size:11px;color:var(--text-muted)">' + (w.stepCount || 0) + ' step(s)' + (w.description ? ' · ' + escHtml(w.description) : '') + '</div></div>' +
+            '<button class="btn btn-sm" onclick="runWorkflowByName(\\'' + escHtml(w.name) + '\\')">Run</button>' +
+          '</div>';
+        }).join('');
+    const runs = data.runs || [];
+    runsEl.innerHTML = runs.length === 0
+      ? '<div style="color:var(--text-muted);padding:8px">No runs yet.</div>'
+      : runs.map(r => {
+          const steps = Object.entries(r.stepState || {});
+          return '<div style="border-bottom:1px solid var(--border);padding:6px 0;font-size:12px">' +
+            '<span class="badge ' + (r.status === 'completed' ? 'badge-green' : r.status === 'failed' ? 'badge-red' : 'badge-blue') + '">' + r.status + '</span> ' +
+            escHtml(r.workflowId) + ' · ' + new Date(r.startedAt).toLocaleString() +
+            (steps.length > 0 ? '<div style="font-size:11px;color:var(--text-muted);margin-top:3px">' + steps.map(([id, s]) => (s.status === 'completed' ? '✓' : s.status === 'failed' ? '✗' : '·') + ' ' + escHtml(id)).join(' · ') + '</div>' : '') +
+          '</div>';
+        }).join('');
+  } catch (err) {
+    listEl.innerHTML = '<div style="color:var(--text-muted)">Failed to load.</div>';
+  }
+}
+async function runWorkflowByName(name) {
+  toast('Running workflow "' + name + '"…', 'info');
+  try {
+    const r = await apiFetch('/api/workflows/run/' + encodeURIComponent(name), { method: 'POST' });
+    toast('Workflow ' + r.status, r.status === 'completed' ? 'success' : 'warning');
+    loadWorkflows();
+  } catch (err) {
+    toast('Workflow failed: ' + err.message, 'error');
+  }
+}
+
+// ─────────────────────────────────────────────
+// Hermes Tier 5: Reflection + Digest
+// ─────────────────────────────────────────────
+async function loadReflections() {
+  const el = document.getElementById('reflections-list');
+  try {
+    const data = await apiFetch('/api/reflections?limit=20');
+    const list = data.reflections || [];
+    if (list.length === 0) {
+      el.innerHTML = '<div style="color:var(--text-muted);padding:8px">No reflections yet.</div>';
+      return;
+    }
+    el.innerHTML = list.map(r => {
+      const patterns = (r.patterns || []).map((p, i) => '<li>' + escHtml(p) + '</li>').join('');
+      return '<div style="border-bottom:1px solid var(--border);padding:10px 0">' +
+        '<div style="display:flex;justify-content:space-between"><span><span class="badge badge-purple">' + escHtml(r.period) + '</span> ' + new Date(r.createdAt).toLocaleString() + '</span>' +
+          (r.acknowledged ? '<span class="badge badge-green">ack</span>' : '<button class="btn btn-ghost btn-sm" onclick="ackReflection(' + r.id + ')">Acknowledge</button>') +
+        '</div>' +
+        '<div style="margin-top:6px;color:var(--text)">' + escHtml(r.summary) + '</div>' +
+        (patterns ? '<ul style="margin:6px 0 0 18px;color:var(--text-muted);font-size:12px">' + patterns + '</ul>' : '') +
+      '</div>';
+    }).join('');
+  } catch (err) {
+    el.innerHTML = '<div style="color:var(--text-muted)">Failed to load.</div>';
+  }
+}
+async function generateReflection(period) {
+  toast('Generating ' + period + ' reflection (Haiku call)…', 'info');
+  try {
+    const r = await apiFetch('/api/reflections/generate', { method: 'POST', body: JSON.stringify({ period }) });
+    if (r.reflection) toast('Reflection generated', 'success');
+    else toast('No reflection generated (insufficient activity).', 'warning');
+    loadReflections();
+  } catch (err) {
+    toast('Failed: ' + err.message, 'error');
+  }
+}
+async function ackReflection(id) {
+  try { await apiFetch('/api/reflections/' + id + '/ack', { method: 'POST' }); loadReflections(); }
+  catch (err) { toast('Failed: ' + err.message, 'error'); }
+}
+async function loadDigest(period) {
+  const el = document.getElementById('digest-content');
+  el.textContent = 'Computing…';
+  try {
+    const d = await apiFetch('/api/digest?period=' + encodeURIComponent(period));
+    el.textContent = d.body || '(empty)';
+  } catch (err) {
+    el.textContent = 'Failed: ' + err.message;
+  }
+}
+
+// ─────────────────────────────────────────────
+// Hermes Tier 4: Skill Marketplace
+// ─────────────────────────────────────────────
+async function loadMarketplace() {
+  const q = document.getElementById('marketplace-search').value.trim();
+  const el = document.getElementById('marketplace-results');
+  el.innerHTML = '<div class="chat-thinking" style="padding:12px 0">Searching…</div>';
+  try {
+    const data = await apiFetch('/api/skill-marketplace?q=' + encodeURIComponent(q));
+    const items = Array.isArray(data.items) ? data.items : Array.isArray(data) ? data : [];
+    if (items.length === 0) {
+      el.innerHTML = '<div style="color:var(--text-muted);padding:8px">No results. Try <code>/skill_install &lt;name&gt;</code> in Telegram if the marketplace API is offline.</div>';
+      return;
+    }
+    el.innerHTML = items.map(it => {
+      const name = it.name || it.slug || it.id || 'unknown';
+      const desc = it.description || it.summary || '';
+      return '<div style="border-bottom:1px solid var(--border);padding:10px 0">' +
+        '<div style="display:flex;justify-content:space-between;align-items:center">' +
+          '<b>' + escHtml(name) + '</b>' +
+          '<span style="color:var(--text-dim);font-size:11px">' + escHtml(it.author || '') + '</span>' +
+        '</div>' +
+        '<div style="color:var(--text-muted);font-size:12px;margin-top:4px">' + escHtml(desc) + '</div>' +
+        '<div style="margin-top:6px;font-size:11px;color:var(--text-dim)">Install: <code>/skill_install ' + escHtml(name) + '</code> in Telegram</div>' +
+      '</div>';
+    }).join('');
+  } catch (err) {
+    el.innerHTML = '<div style="color:var(--text-muted)">Marketplace unavailable: ' + escHtml(err.message) + '</div>';
   }
 }
 

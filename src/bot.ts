@@ -114,6 +114,14 @@ import { registerSandboxCommands } from './sandbox/commands.js';
 import { attachProposalNotifier, registerSkillSynthesisCommands } from './skill-synthesis.js';
 import { registerExportCommands } from './trajectory-export.js';
 import { registerSkillImportCommands } from './skill-import.js';
+import { registerMemoryBlockCommands } from './memory-blocks.js';
+import { registerEvalCommands } from './evals.js';
+import { registerWorkflowCommands } from './workflows.js';
+import { registerDebateCommand } from './debate.js';
+import { registerReflectionCommands } from './reflection.js';
+import { registerDigestCommand } from './digest.js';
+import { registerMoodCommand } from './moods.js';
+import { registerSyncCommand } from './sync/litestream.js';
 import { registerImportCommands } from './importer.js';
 import { generateSessionHandoff, injectHandoffContext } from './session-continuity.js';
 import { detectCorrection, logReflection, buildReflectionContext } from './self-reflection.js';
@@ -1395,6 +1403,30 @@ export function createBot(): Bot {
 
   // /skill_install — import a SKILL.md from agentskills.io or any URL
   registerSkillImportCommands(bot, isAuthorised);
+
+  // Memory block introspection + targeted forgetting
+  registerMemoryBlockCommands(bot, isAuthorised);
+
+  // /evals — declarative test cases for agent behavior
+  registerEvalCommands(bot, isAuthorised);
+
+  // /workflow — declarative state-graph workflows
+  registerWorkflowCommands(bot, isAuthorised);
+
+  // /debate — N-round multi-agent debate
+  registerDebateCommand(bot, isAuthorised);
+
+  // /reflect — daily/weekly pattern surfacing
+  registerReflectionCommands(bot, isAuthorised);
+
+  // /digest — period rollup
+  registerDigestCommand(bot, isAuthorised);
+
+  // /mood — context-aware personality modulation
+  registerMoodCommand(bot, isAuthorised);
+
+  // /sync — cross-device sync via Litestream
+  registerSyncCommand(bot, isAuthorised);
 
   // /delegate — delegate task to an agent (handled via handleMessage delegation detection)
   // This command is intercepted by handleMessage's parseDelegation(),

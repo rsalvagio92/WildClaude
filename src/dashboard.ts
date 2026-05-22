@@ -77,6 +77,7 @@ import { USER_DATA_DIR } from './paths.js';
 import { loadUserConfig, saveUserConfig, writeOverlayFile } from './overlay.js';
 import { DEFAULT_AUTOMATIONS, syncAutomations } from './automations.js';
 import { registerExternalDashboardRoutes } from './external-dashboards.js';
+import { registerHermesRoutes } from './dashboard-hermes.js';
 import { getTelegramConnected, getBotInfo, chatEvents, getIsProcessing, abortActiveQuery, ChatEvent } from './state.js';
 
 async function classifyTaskAgent(_prompt: string): Promise<string | null> {
@@ -1530,6 +1531,9 @@ export function startDashboard(botApi?: Api<RawApi>): void {
     child.unref();
     return c.json({ ok: true });
   });
+
+  // ── Hermes integration: trace inspector, memory blocks, evals, workflows, reflection, digest ──
+  registerHermesRoutes(app);
 
   // ── External service dashboards ────────────────────────────────────
   registerExternalDashboardRoutes(app);

@@ -300,6 +300,100 @@ function createSchema(database: Database.Database): void {
     );
     CREATE INDEX IF NOT EXISTS idx_tool_sequences_status ON tool_sequences(status, last_seen DESC);
 
+    -- Memory blocks: Mem0-style scoped + Letta-style editable.
+    -- scope: 'user' (persistent, identity-level) | 'session' (conversation-local) | 'agent' (per-agent specialization)
+    -- editable: 0 = derived from kernel files (read-only mirror), 1 = user/agent editable
+    CREATE TABLE IF NOT EXISTS memory_blocks (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      scope       TEXT NOT NULL,
+      owner       TEXT NOT NULL DEFAULT '',
+      topic       TEXT NOT NULL,
+      body        TEXT NOT NULL,
+      editable    INTEGER NOT NULL DEFAULT 1,
+      pinned      INTEGER NOT NULL DEFAULT 0,
+      importance  REAL NOT NULL DEFAULT 0.5,
+      embedding   BLOB,
+      created_at  INTEGER NOT NULL,
+      updated_at  INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_memory_blocks_scope ON memory_blocks(scope, owner, updated_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_memory_blocks_topic ON memory_blocks(topic);
+
+    -- Evaluations: declarative test cases for agent behavior.
+    -- definition is the YAML/JSON spec, last_result holds the most recent run.
+    CREATE TABLE IF NOT EXISTS evals (
+      id          TEXT PRIMARY KEY,
+      name        TEXT NOT NULL,
+      definition  TEXT NOT NULL,
+      created_at  INTEGER NOT NULL,
+      updated_at  INTEGER NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS eval_runs (
+      id          TEXT PRIMARY KEY,
+      eval_id     TEXT NOT NULL,
+      status      TEXT NOT NULL DEFAULT 'pending',
+      score       REAL,
+      passed      INTEGER NOT NULL DEFAULT 0,
+      total       INTEGER NOT NULL DEFAULT 0,
+      details     TEXT NOT NULL DEFAULT '[]',
+      started_at  INTEGER NOT NULL,
+      completed_at INTEGER
+    );
+    CREATE INDEX IF NOT EXISTS idx_eval_runs_time ON eval_runs(eval_id, started_at DESC);
+
+    -- Declarative workflows: YAML-defined DAGs with resumable state.
+    CREATE TABLE IF NOT EXISTS workflows (
+      id          TEXT PRIMARY KEY,
+      name        TEXT NOT NULL UNIQUE,
+      definition  TEXT NOT NULL,
+      created_at  INTEGER NOT NULL,
+      updated_at  INTEGER NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS workflow_runs (
+      id           TEXT PRIMARY KEY,
+      workflow_id  TEXT NOT NULL,
+      status       TEXT NOT NULL DEFAULT 'running',
+      step_state   TEXT NOT NULL DEFAULT '{}',
+      result       TEXT,
+      error        TEXT,
+      started_at   INTEGER NOT NULL,
+      completed_at INTEGER
+    );
+    CREATE INDEX IF NOT EXISTS idx_workflow_runs_time ON workflow_runs(workflow_id, started_at DESC);
+
+    -- Reflection automation: daily/weekly pattern surfacings, plus user acknowledgements.
+    CREATE TABLE IF NOT EXISTS reflections (
+      id            INTEGER PRIMARY KEY AUTOINCREMENT,
+      period        TEXT NOT NULL,
+      summary       TEXT NOT NULL,
+      patterns      TEXT NOT NULL DEFAULT '[]',
+      acknowledged  INTEGER NOT NULL DEFAULT 0,
+      created_at    INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_reflections_time ON reflections(created_at DESC);
+
+    -- Digests: precomputed "what happened" rollups.
+    CREATE TABLE IF NOT EXISTS digests (
+      id           INTEGER PRIMARY KEY AUTOINCREMENT,
+      period_start INTEGER NOT NULL,
+      period_end   INTEGER NOT NULL,
+      body         TEXT NOT NULL,
+      metrics      TEXT NOT NULL DEFAULT '{}',
+      created_at   INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_digests_time ON digests(period_end DESC);
+
+    -- Personality mood log: track how the personality has shifted over time.
+    CREATE TABLE IF NOT EXISTS mood_log (
+      id        INTEGER PRIMARY KEY AUTOINCREMENT,
+      mood      TEXT NOT NULL,
+      reason    TEXT NOT NULL DEFAULT '',
+      at        INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_mood_log_time ON mood_log(at DESC);
+
     CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
       summary,
       raw_text,
