@@ -17,9 +17,10 @@ import path from 'path';
 import { randomBytes } from 'crypto';
 
 import { runAgent } from './agent.js';
-import { PROJECT_ROOT } from './config.js';
+import { PROJECT_ROOT, SANDBOX_DEFAULT } from './config.js';
 import { logger } from './logger.js';
 import { createMissionTask, completeMissionTask } from './db.js';
+import { createSandbox, Sandbox, SandboxKind } from './sandbox/index.js';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -28,6 +29,12 @@ export interface RalphConfig {
   maxIterations: number;
   maxCallsPerHour: number;
   projectDir: string;
+  /**
+   * Sandbox kind to run the loop in. Defaults to SANDBOX_DEFAULT.
+   * When set to anything other than 'local', the agent's cwd is the sandbox
+   * scratch dir — the host filesystem is not touched outside that dir.
+   */
+  sandboxKind?: SandboxKind;
 }
 
 export interface RalphStatus {
@@ -144,7 +151,21 @@ export async function startRalph(
   stopRequested = false;
   callTimestamps.length = 0;
 
-  const ralphDir = path.join(config.projectDir, '.ralph');
+  // ── Set up sandbox ────────────────────────────────────────────────────────
+  // Ralph runs inside a sandbox so it can't touch the bot's own source.
+  // Default is local-scratch (filesystem-isolated). Set sandboxKind: 'docker'
+  // or SANDBOX_DEFAULT=docker for full process isolation.
+  const sandboxKind = config.sandboxKind ?? SANDBOX_DEFAULT;
+  let sandbox: Sandbox | null = null;
+  try {
+    sandbox = await createSandbox(sandboxKind, { label: `ralph:${config.goal.slice(0, 60)}` });
+  } catch (err) {
+    logger.warn({ err }, 'Sandbox creation failed; Ralph will run in legacy projectDir mode');
+  }
+
+  // Pick the working dir: sandbox scratch (preferred) or legacy projectDir.
+  const workDir = sandbox?.hostCwd ?? config.projectDir;
+  const ralphDir = path.join(workDir, '.ralph');
   const promptFile = path.join(ralphDir, 'PROMPT.md');
   const planFile = path.join(ralphDir, 'fix_plan.md');
 
@@ -152,7 +173,10 @@ export async function startRalph(
   fs.mkdirSync(ralphDir, { recursive: true });
   fs.writeFileSync(promptFile, `# Ralph Goal\n\n${config.goal}\n`, 'utf8');
 
-  logger.info({ goal: config.goal, projectDir: config.projectDir }, 'Ralph starting');
+  logger.info(
+    { goal: config.goal, workDir, sandbox: sandbox?.id ?? 'none', kind: sandbox?.kind ?? 'legacy' },
+    'Ralph starting',
+  );
 
   // ── Track in Mission Control ──────────────────────────────────────────────
   const missionId = 'ralph-' + randomBytes(4).toString('hex');
@@ -194,6 +218,9 @@ export async function startRalph(
       undefined,
       undefined,
       undefined,
+      undefined,
+      undefined,
+      sandbox?.hostCwd,
     );
 
     const planContent = decomposeResult.text ?? '';
@@ -265,6 +292,9 @@ export async function startRalph(
         undefined,
         undefined,
         undefined,
+        undefined,
+        undefined,
+        sandbox?.hostCwd,
       );
 
       // Persist session for context continuity
@@ -336,6 +366,17 @@ export async function startRalph(
       const finalStatus = status.completedTasks === status.totalTasks && status.totalTasks > 0 ? 'completed' : 'failed';
       completeMissionTask(missionId, summary, finalStatus, finalStatus === 'failed' ? status.lastOutput : undefined);
     } catch { /* mission tracking is best-effort */ }
+
+    // ── Dispose sandbox ─────────────────────────────────────────────────────
+    if (sandbox) {
+      try {
+        await sandbox.dispose();
+        const { completeSandbox } = await import('./sandbox/registry.js');
+        completeSandbox(sandbox.id);
+      } catch (err) {
+        logger.warn({ err, sandboxId: sandbox.id }, 'Ralph: sandbox dispose failed');
+      }
+    }
   }
 }
 

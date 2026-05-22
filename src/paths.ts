@@ -42,6 +42,8 @@ export function ensureUserDataDirs(): void {
     path.join(USER_DATA_DIR, 'personalities'),
     path.join(USER_DATA_DIR, 'session-handoffs'),
     path.join(USER_DATA_DIR, 'uploads'),
+    path.join(USER_DATA_DIR, 'sandboxes'),
+    path.join(USER_DATA_DIR, 'exports'),
   ];
   for (const dir of dirs) {
     fs.mkdirSync(dir, { recursive: true });

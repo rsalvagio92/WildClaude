@@ -192,3 +192,41 @@ export const IDLE_LOCK_MINUTES = parseInt(
 export const EMERGENCY_KILL_PHRASE =
   process.env.EMERGENCY_KILL_PHRASE || envConfig.EMERGENCY_KILL_PHRASE || '';
 
+// ── Sandbox ──────────────────────────────────────────────────────────
+// Default execution backend for Ralph + execute_code:
+//   'local'         — no isolation (legacy behaviour)
+//   'local-scratch' — fs-isolated scratch dir under USER_DATA_DIR/sandboxes/
+//   'docker'        — ephemeral container (requires dockerode + docker daemon)
+export const SANDBOX_DEFAULT =
+  (process.env.SANDBOX_DEFAULT || 'local-scratch') as 'local' | 'local-scratch' | 'docker';
+export const SANDBOX_DOCKER_IMAGE = process.env.SANDBOX_DOCKER_IMAGE || 'node:20-slim';
+export const SANDBOX_TIMEOUT_MS = parseInt(process.env.SANDBOX_TIMEOUT_MS || '300000', 10);
+export const SANDBOX_MEM_LIMIT_MB = parseInt(process.env.SANDBOX_MEM_LIMIT_MB || '512', 10);
+export const SANDBOX_NETWORK =
+  (process.env.SANDBOX_NETWORK || 'none') as 'none' | 'bridge';
+// Auto-prune scratch dirs older than this on bot startup (ms). 0 = disabled.
+export const SANDBOX_PRUNE_AGE_MS = parseInt(
+  process.env.SANDBOX_PRUNE_AGE_MS || (7 * 24 * 3600 * 1000).toString(),
+  10,
+);
+
+// ── Skill synthesis ──────────────────────────────────────────────────
+// Watch turns for repeated tool sequences. When the same canonical sequence
+// shows up SKILL_SYNTHESIS_MIN_REPETITIONS times within
+// SKILL_SYNTHESIS_WINDOW_DAYS, propose a new skill via Telegram.
+export const SKILL_SYNTHESIS_ENABLED =
+  (process.env.SKILL_SYNTHESIS_ENABLED ?? 'true').toLowerCase() !== 'false';
+export const SKILL_SYNTHESIS_MIN_REPETITIONS = parseInt(
+  process.env.SKILL_SYNTHESIS_MIN_REPETITIONS || '5',
+  10,
+);
+export const SKILL_SYNTHESIS_WINDOW_DAYS = parseInt(
+  process.env.SKILL_SYNTHESIS_WINDOW_DAYS || '14',
+  10,
+);
+// Minimum tools per sequence before we consider it skill-worthy.
+export const SKILL_SYNTHESIS_MIN_TOOLS = parseInt(
+  process.env.SKILL_SYNTHESIS_MIN_TOOLS || '3',
+  10,
+);
+

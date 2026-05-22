@@ -110,6 +110,10 @@ import { getSlackConversations, getSlackMessages, sendSlackMessage, SlackConvers
 import { getWaChats, getWaChatMessages, sendWhatsAppMessage, WaChat } from './whatsapp.js';
 import { registerLifeCommands } from './life-commands.js';
 import { registerRalphCommand } from './ralph.js';
+import { registerSandboxCommands } from './sandbox/commands.js';
+import { attachProposalNotifier, registerSkillSynthesisCommands } from './skill-synthesis.js';
+import { registerExportCommands } from './trajectory-export.js';
+import { registerSkillImportCommands } from './skill-import.js';
 import { registerImportCommands } from './importer.js';
 import { generateSessionHandoff, injectHandoffContext } from './session-continuity.js';
 import { detectCorrection, logReflection, buildReflectionContext } from './self-reflection.js';
@@ -900,6 +904,11 @@ export function createBot(): Bot {
         bot.api.sendMessage(ALLOWED_CHAT_ID, msg).catch(() => {});
       }
     });
+
+    // Auto-skill synthesis proposals → Telegram
+    attachProposalNotifier((text) => {
+      bot.api.sendMessage(ALLOWED_CHAT_ID, text, { parse_mode: 'HTML' }).catch(() => {});
+    });
   }
 
   // Register commands in the Telegram menu (built-in + auto-discovered skills)
@@ -1374,6 +1383,18 @@ export function createBot(): Bot {
 
   // /ralph — autonomous development loop (Ralph bridge)
   registerRalphCommand(bot, isAuthorised);
+
+  // /sandbox — sandbox status, prune, smoke test, docker check
+  registerSandboxCommands(bot, isAuthorised);
+
+  // /skill_accept, /skill_reject — auto-skill synthesis approval
+  registerSkillSynthesisCommands(bot, isAuthorised);
+
+  // /export trajectories — JSONL export for fine-tuning / analysis
+  registerExportCommands(bot, isAuthorised);
+
+  // /skill_install — import a SKILL.md from agentskills.io or any URL
+  registerSkillImportCommands(bot, isAuthorised);
 
   // /delegate — delegate task to an agent (handled via handleMessage delegation detection)
   // This command is intercepted by handleMessage's parseDelegation(),

@@ -4,6 +4,7 @@ import { spawn, execSync } from 'child_process';
 import { PROJECT_ROOT, agentCwd } from './config.js';
 import { readEnvFile } from './env.js';
 import { logger } from './logger.js';
+import { recordTurn, ToolUseRecord } from './skill-synthesis.js';
 
 // ── Direct CLI mode ──────────────────────────────────────────────────
 // Uses `claude -p` directly instead of the Agent SDK.
@@ -42,6 +43,7 @@ async function runAgentDirect(
   abortController?: AbortController,
   onStreamText?: (accumulatedText: string) => void,
   appendSystemPrompt?: string,
+  cwdOverride?: string,
 ): Promise<AgentResult> {
   if (!claudeCliPath) {
     claudeCliPath = findClaudeCli();
@@ -54,7 +56,7 @@ async function runAgentDirect(
     }
   }
 
-  const cwd = agentCwd ?? (process.env.HOME || process.env.USERPROFILE || PROJECT_ROOT);
+  const cwd = cwdOverride ?? agentCwd ?? (process.env.HOME || process.env.USERPROFILE || PROJECT_ROOT);
 
   const args = [
     '-p', message,
@@ -76,6 +78,7 @@ async function runAgentDirect(
     let newSessionId: string | undefined = sessionId;
     let resultText: string | null = null;
     let usage: UsageInfo | null = null;
+    const turnTools: ToolUseRecord[] = [];
 
     const proc = spawn(claudeCliPath!, args, {
       cwd,
@@ -105,20 +108,23 @@ async function runAgentDirect(
             newSessionId = event.session_id;
           }
 
-          // Tool use events — forward as progress
+          // Tool use events — forward as progress + collect for skill synthesis
           if (event.type === 'assistant' && event.message?.content) {
             for (const block of event.message.content) {
-              if (block.type === 'tool_use' && block.name && onProgress) {
-                let detail = toolLabel(block.name);
-                const input = block.input;
-                if (input) {
-                  if (block.name === 'Read' && input.file_path) detail += `: ${input.file_path}`;
-                  else if (block.name === 'Write' && input.file_path) detail += `: ${input.file_path}`;
-                  else if (block.name === 'Edit' && input.file_path) detail += `: ${input.file_path}`;
-                  else if (block.name === 'Bash' && input.command) detail += `: ${String(input.command)}`;
-                  else if (block.name === 'Agent' && input.description) detail += `: ${input.description}`;
+              if (block.type === 'tool_use' && block.name) {
+                turnTools.push({ name: block.name, input: block.input });
+                if (onProgress) {
+                  let detail = toolLabel(block.name);
+                  const input = block.input;
+                  if (input) {
+                    if (block.name === 'Read' && input.file_path) detail += `: ${input.file_path}`;
+                    else if (block.name === 'Write' && input.file_path) detail += `: ${input.file_path}`;
+                    else if (block.name === 'Edit' && input.file_path) detail += `: ${input.file_path}`;
+                    else if (block.name === 'Bash' && input.command) detail += `: ${String(input.command)}`;
+                    else if (block.name === 'Agent' && input.description) detail += `: ${input.description}`;
+                  }
+                  onProgress({ type: 'tool_active', description: detail });
                 }
-                onProgress({ type: 'tool_active', description: detail });
               }
               if (block.type === 'text' && block.text && onStreamText) {
                 onStreamText(block.text);
@@ -174,6 +180,13 @@ async function runAgentDirect(
         { mode: 'direct-cli', hasResult: !!resultText, code, sessionId: newSessionId, cost: usage?.totalCostUsd },
         'Agent result received (direct CLI)',
       );
+
+      // Fire-and-forget skill synthesis recording. Never blocks resolution.
+      if (turnTools.length > 0) {
+        recordTurn(turnTools, newSessionId).catch((err) => {
+          logger.warn({ err }, 'skill synthesis: recordTurn failed');
+        });
+      }
 
       // If CLI failed with a session resume, retry without --resume
       // (stale session IDs from old installs cause code 1)
@@ -357,13 +370,14 @@ export async function runAgent(
   abortController?: AbortController,
   onStreamText?: (accumulatedText: string) => void,
   appendSystemPrompt?: string,
+  cwdOverride?: string,
 ): Promise<AgentResult> {
   // Try direct CLI first (uses subscription, avoids third-party limits)
   // Falls back to SDK if CLI fails or ANTHROPIC_API_KEY is set (explicit API mode)
   const secrets = readEnvFile(['CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_API_KEY']);
   if (!secrets.ANTHROPIC_API_KEY && !process.env.ANTHROPIC_API_KEY) {
     try {
-      return await runAgentDirect(message, sessionId, onTyping, onProgress, model, abortController, onStreamText, appendSystemPrompt);
+      return await runAgentDirect(message, sessionId, onTyping, onProgress, model, abortController, onStreamText, appendSystemPrompt, cwdOverride);
     } catch (err) {
       logger.warn({ err: err instanceof Error ? err.message : String(err) }, 'Direct CLI failed, falling back to SDK');
     }
@@ -387,6 +401,7 @@ export async function runAgent(
   let lastCallCacheRead = 0;
   let lastCallInputTokens = 0;
   let streamedText = '';
+  const turnTools: ToolUseRecord[] = [];
 
   // Refresh typing indicator on an interval while Claude works.
   // Telegram's "typing..." action expires after ~5s.
@@ -401,11 +416,11 @@ export async function runAgent(
     for await (const event of query({
       prompt: singleTurn(message),
       options: {
-        // cwd = agent directory (if running as agent) or user's home.
+        // cwd = sandbox scratch dir (if provided), agent directory, or user's home.
         // NEVER use PROJECT_ROOT — Claude Code would modify the bot's own source.
         // Use the user's home directory as workspace. Claude Code loads
         // CLAUDE.md from ~/.wild-claude-pi/ via settingSources.
-        cwd: agentCwd ?? (process.env.HOME || process.env.USERPROFILE || PROJECT_ROOT),
+        cwd: cwdOverride ?? agentCwd ?? (process.env.HOME || process.env.USERPROFILE || PROJECT_ROOT),
 
         // Resume the previous session for this chat (persistent context)
         resume: sessionId,
@@ -463,12 +478,14 @@ export async function runAgent(
           lastCallInputTokens = callInputTokens;
         }
 
-        // Extract tool_use blocks from assistant content for progress reporting
-        if (onProgress) {
+        // Extract tool_use blocks from assistant content for progress reporting + skill synthesis
+        {
           const content = msg?.['content'] as Array<{ type: string; name?: string; input?: Record<string, unknown> }> | undefined;
           if (Array.isArray(content)) {
             for (const block of content) {
               if (block.type === 'tool_use' && block.name) {
+                turnTools.push({ name: block.name, input: block.input });
+                if (!onProgress) continue;
                 let detail = toolLabel(block.name);
                 const input = block.input;
                 if (input) {
@@ -572,6 +589,12 @@ export async function runAgent(
     throw err;
   } finally {
     clearInterval(typingInterval);
+    // Fire-and-forget skill synthesis recording. Never blocks resolution.
+    if (turnTools.length > 0) {
+      recordTurn(turnTools, newSessionId).catch((err) => {
+        logger.warn({ err }, 'skill synthesis: recordTurn failed');
+      });
+    }
   }
 
   return { text: resultText, newSessionId, usage };

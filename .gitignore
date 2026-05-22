@@ -16,3 +16,4 @@ RESEARCH.md
 workspace/
 playwright-tests/
 playwright.config.ts
+.claude/

@@ -274,6 +274,32 @@ function createSchema(database: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_audit_time ON audit_log(created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_audit_agent ON audit_log(agent_id, created_at DESC);
 
+    CREATE TABLE IF NOT EXISTS sandboxes (
+      id            TEXT PRIMARY KEY,
+      kind          TEXT NOT NULL,
+      label         TEXT NOT NULL DEFAULT '',
+      started_at    INTEGER NOT NULL,
+      completed_at  INTEGER
+    );
+    CREATE INDEX IF NOT EXISTS idx_sandboxes_time ON sandboxes(started_at DESC);
+
+    -- Auto-skill synthesis: track repeated tool sequences.
+    -- 'signature' is the canonical, PII-stripped representation (tool names + arg shapes).
+    -- 'status' lifecycle: pending → proposed → accepted/rejected.
+    CREATE TABLE IF NOT EXISTS tool_sequences (
+      hash          TEXT PRIMARY KEY,
+      signature     TEXT NOT NULL,
+      tool_count    INTEGER NOT NULL,
+      count         INTEGER NOT NULL DEFAULT 1,
+      sample_session_ids TEXT NOT NULL DEFAULT '[]',
+      status        TEXT NOT NULL DEFAULT 'pending',
+      first_seen    INTEGER NOT NULL,
+      last_seen     INTEGER NOT NULL,
+      proposed_name TEXT,
+      proposal_path TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_tool_sequences_status ON tool_sequences(status, last_seen DESC);
+
     CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
       summary,
       raw_text,
