@@ -17,3 +17,4 @@ workspace/
 playwright-tests/
 playwright.config.ts
 .claude/
+scripts/frontend-screenshots/
