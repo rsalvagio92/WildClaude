@@ -4673,7 +4673,7 @@ async function loadFinetune() {
       '</div>' +
       '<div style="margin-top:10px;display:flex;gap:8px">' +
         '<button class="btn btn-sm" onclick="buildFinetuneJsonl()">Crea JSONL</button>' +
-        '<span style="font-size:11px;color:var(--text-muted);align-self:center">L\'invio resta gated da <code>FINETUNE_ENABLED=true</code> in .env</span>' +
+        '<span style="font-size:11px;color:var(--text-muted);align-self:center">Invio resta gated da <code>FINETUNE_ENABLED=true</code> in .env</span>' +
       '</div>';
   } catch (err) {
     el.innerHTML = '<div style="color:var(--text-muted)">Stima non disponibile.</div>';

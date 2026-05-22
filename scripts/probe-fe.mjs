@@ -1,0 +1,14 @@
+import { chromium } from 'playwright';
+const browser = await chromium.launch();
+const page = await browser.newPage();
+const errors = [];
+page.on('pageerror', (e) => errors.push('pageerror: ' + e.message));
+page.on('console', (m) => { if (m.type() === 'error') errors.push('console: ' + m.text()); });
+await page.goto('http://192.168.1.112:3141/dashboard?token=2fe2bfaebc6d1e61b7ba5301fb00c2e03f183977ffba0e5d', { waitUntil: 'load' });
+await page.waitForTimeout(3000);
+const appDisplay = await page.evaluate(() => document.getElementById('app')?.style.display);
+const tokenDisplay = await page.evaluate(() => document.getElementById('token-screen')?.style.display);
+console.log('app display:', appDisplay);
+console.log('token-screen display:', tokenDisplay);
+console.log('errors:', JSON.stringify(errors.slice(0, 5), null, 2));
+await browser.close();
