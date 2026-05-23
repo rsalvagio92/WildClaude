@@ -76,6 +76,11 @@ class MessageQueue {
   hasBuffered(chatId: string): boolean {
     return (this.buffered.get(chatId)?.length ?? 0) > 0;
   }
+
+  /** Count buffered messages for a chat without clearing. */
+  flushBufferedCount(chatId: string): number {
+    return this.buffered.get(chatId)?.length ?? 0;
+  }
 }
 
 export const messageQueue = new MessageQueue();

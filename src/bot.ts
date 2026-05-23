@@ -589,10 +589,12 @@ export async function handleMessage(ctx: Context, message: string, forceVoiceRep
 
   try {
     // Progress callback: surface agent activity to Telegram + SSE.
-    // Tool activity is throttled to one Telegram update per 30s to avoid spam.
-    let lastToolNotifyTime = 0;
+    // Tool activity edits the ack placeholder live (debounced) so the user
+    // sees what's happening without the bot spamming new messages.
+    let lastToolEditTime = 0;
     let lastToolDesc = '';
-    const TOOL_NOTIFY_INTERVAL_MS = 30_000;
+    const TOOL_EDIT_DEBOUNCE_MS = 1500; // refresh the placeholder this often
+    const TOOL_FALLBACK_NOTIFY_MS = 60_000; // separate message if same tool stuck this long
 
     const verbosity = getVerbosity();
 
@@ -611,11 +613,27 @@ export async function handleMessage(ctx: Context, message: string, forceVoiceRep
         }
       } else if (event.type === 'tool_active') {
         lastToolDesc = event.description;
-        if (verbosity.showTools && !streamingEnabled) {
+        if (verbosity.showTools) {
           const now = Date.now();
-          if (now - lastToolNotifyTime >= TOOL_NOTIFY_INTERVAL_MS) {
-            lastToolNotifyTime = now;
-            void ctx.reply(`⚙️ ${event.description}...`).catch(() => {});
+          // Live-edit the placeholder when streaming is off (when streaming is
+          // on, the streamed text already keeps the user informed).
+          if (!streamingEnabled && streamMsgId && now - lastToolEditTime >= TOOL_EDIT_DEBOUNCE_MS) {
+            lastToolEditTime = now;
+            const truncated = event.description.length > 80
+              ? event.description.slice(0, 77) + '…'
+              : event.description;
+            void ctx.api.editMessageText(
+              chatId,
+              streamMsgId,
+              `⚙️ <i>${truncated.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</i>`,
+              { parse_mode: 'HTML' },
+            ).catch(() => {});
+          }
+          // Fallback: if a single tool has been running for >60s without
+          // edit refresh (e.g. very long Bash), send a separate reassurance.
+          if (now - lastToolEditTime >= TOOL_FALLBACK_NOTIFY_MS) {
+            lastToolEditTime = now;
+            void ctx.reply(`⏱️ <i>Ancora qui — ${event.description.slice(0, 100)}</i>`, { parse_mode: 'HTML' }).catch(() => {});
           }
         }
       }
@@ -667,9 +685,15 @@ export async function handleMessage(ctx: Context, message: string, forceVoiceRep
     // For streaming, this becomes the live-edited message. For non-streaming, it
     // gets deleted before the final response (see cleanup below).
     if (!streamMsgId) {
-      const ackEmoji = routing.tier === 'COMPLEX' ? '⏳ opus...' : routing.tier === 'MEDIUM' ? '⏳' : '⏳';
+      // More visible ack — shows which model picked, gives a verb the user
+      // can read. Edited later as tools fire (see onProgress below).
+      const ackText = routing.tier === 'COMPLEX'
+        ? '⏳ <i>Sto pensando (opus)…</i>'
+        : routing.tier === 'MEDIUM'
+          ? '⏳ <i>Lavoro sulla richiesta (sonnet)…</i>'
+          : '⏳ <i>Rispondo (haiku)…</i>';
       try {
-        const ackMsg = await ctx.reply(ackEmoji);
+        const ackMsg = await ctx.reply(ackText, { parse_mode: 'HTML' });
         streamMsgId = ackMsg.message_id;
       } catch { /* best effort */ }
     }
@@ -1947,8 +1971,14 @@ export function createBot(): Bot {
 
       // Buffer the message for context injection after current task
       messageQueue.bufferMessage(chatIdStr, text);
-      // Silent acknowledgment — just a 👍 reaction instead of a verbose message
-      void ctx.react('👍').catch(() => {});
+      // Visible ack: reaction + short text message with the buffer count.
+      // The text is brief on purpose — it auto-deletes after the main task
+      // completes (handleMessage flushes the buffer and reads them in).
+      void ctx.react('👀').catch(() => {});
+      const bufferedCount = messageQueue.flushBufferedCount(chatIdStr) ?? 0;
+      const summary = `🪣 <i>Visto. Sto finendo il messaggio precedente, poi gestisco questo ` +
+        (bufferedCount > 1 ? `(${bufferedCount} in coda).` : '.') + '</i>';
+      void ctx.reply(summary, { parse_mode: 'HTML' }).catch(() => {});
     } else {
       // Queue is idle — process immediately
       messageQueue.enqueue(chatIdStr, () => handleMessage(ctx, text));
