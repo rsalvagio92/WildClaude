@@ -3,9 +3,11 @@ import path from 'path';
 import os from 'os';
 import { Api, Bot, Context, InputFile, RawApi } from 'grammy';
 
-import { runAgent, UsageInfo, AgentProgressEvent } from './agent.js';
+import { runAgent, getAuthMode, UsageInfo, AgentProgressEvent } from './agent.js';
 import { buildFullSystemPrompt, generatePersonalityPrompt, loadPersonalityConfig, listPresets, loadPreset } from './personality.js';
 import { classifyMessage, tierLabel, type RoutingResult } from './router.js';
+import { MODELS } from './models.js';
+import { startHotReload } from './hot-reload.js';
 import { needsOnboarding, startOnboarding, isOnboarding, registerOnboarding } from './onboarding.js';
 import { registerSecretsCommands, checkMissingSecretsMessage } from './secrets.js';
 import { registerMcpCommands } from './mcp-manager.js';
@@ -55,7 +57,7 @@ const GLOBAL_STREAM_INTERVAL_MS = 2500;
 // ── Context window tracking ──────────────────────────────────────────
 // Uses input_tokens from the last API call (= actual context window size:
 // system prompt + conversation history + tool results for that call).
-// Compares against CONTEXT_LIMIT (default 1M for Opus 4.6 1M, configurable).
+// Compares against CONTEXT_LIMIT (default 1M for Opus 4.8 1M, configurable).
 //
 // On a fresh session the base overhead (system prompt, skills, CLAUDE.md,
 // MCP tools) can be 200-400k+ tokens. We track that baseline per session
@@ -64,12 +66,25 @@ const CONTEXT_WARN_PCT = 0.75; // Warn when conversation fills 75% of available 
 const lastUsage = new Map<string, UsageInfo>();
 const sessionBaseline = new Map<string, number>(); // sessionId -> first turn's input_tokens
 
+// Bound the tracking maps: a 24/7 single-user bot accumulates one
+// sessionBaseline entry per /newchat forever otherwise. FIFO-evict the
+// oldest entries past the cap (Map preserves insertion order).
+const MAX_TRACKED_ENTRIES = 500;
+function trimMap(map: Map<string, unknown>): void {
+  while (map.size > MAX_TRACKED_ENTRIES) {
+    const oldest = map.keys().next().value;
+    if (oldest === undefined) break;
+    map.delete(oldest);
+  }
+}
+
 /**
  * Check if context usage is getting high and return a warning string, or null.
  * Uses input_tokens (total context) not cache_read_input_tokens (partial metric).
  */
 function checkContextWarning(chatId: string, sessionId: string | undefined, usage: UsageInfo): string | null {
   lastUsage.set(chatId, usage);
+  trimMap(lastUsage);
 
   if (usage.didCompact) {
     return '⚠️ Context window was auto-compacted this turn. Some earlier conversation may have been summarized. Consider /newchat + /respin if things feel off.';
@@ -82,6 +97,7 @@ function checkContextWarning(chatId: string, sessionId: string | undefined, usag
   const baseKey = sessionId ?? chatId;
   if (!sessionBaseline.has(baseKey)) {
     sessionBaseline.set(baseKey, contextTokens);
+    trimMap(sessionBaseline);
     // First turn — no warning, just establishing baseline
     return null;
   }
@@ -145,9 +161,10 @@ const chatModelOverride = new Map<string, string>();
 let activeSidecarCount = 0;
 
 const AVAILABLE_MODELS: Record<string, string> = {
-  opus: 'claude-opus-4-6',
-  sonnet: 'claude-sonnet-4-6',
-  haiku: 'claude-haiku-4-5',
+  fable: MODELS.fable,
+  opus: MODELS.opus,
+  sonnet: MODELS.sonnet,
+  haiku: MODELS.haiku,
 };
 const DEFAULT_MODEL_LABEL = 'opus';
 
@@ -281,6 +298,32 @@ export function splitMessage(text: string): string[] {
 
   if (remaining) parts.push(remaining);
   return parts;
+}
+
+/**
+ * Send a Telegram message with exponential-backoff retry. Respects the
+ * retry_after hint Telegram sends on 429 rate limits. Transient outages
+ * (rate limit, 5xx, network) no longer silently drop messages.
+ */
+export async function sendMessageWithRetry(
+  api: Api<RawApi>,
+  chatId: string | number,
+  text: string,
+  opts: Parameters<Api<RawApi>['sendMessage']>[2] = {},
+  maxRetries = 3,
+): Promise<void> {
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    try {
+      await api.sendMessage(chatId, text, opts);
+      return;
+    } catch (err) {
+      if (attempt === maxRetries - 1) throw err;
+      const retryAfter = (err as { parameters?: { retry_after?: number } })?.parameters?.retry_after;
+      const delayMs = retryAfter ? retryAfter * 1000 : Math.pow(2, attempt) * 1000;
+      logger.warn({ err, attempt: attempt + 1, delayMs }, 'Telegram send failed — retrying');
+      await new Promise((r) => setTimeout(r, delayMs));
+    }
+  }
 }
 
 // ── File marker types ─────────────────────────────────────────────────
@@ -849,6 +892,7 @@ export async function handleMessage(ctx: Context, message: string, forceVoiceRep
           result.usage.totalCostUsd,
           result.usage.didCompact,
           AGENT_ID,
+          getAuthMode(),
         );
       } catch (dbErr) {
         logger.error({ err: dbErr }, 'Failed to save token usage');
@@ -975,7 +1019,7 @@ export function createBot(): Bot {
       const v = getVerbosity();
       if (v.showMemory) {
         const msg = `🧠 New memory #${memoryId} [${importance.toFixed(1)}]: ${summary.slice(0, 200)}\n\n/pin ${memoryId} to make permanent`;
-        bot.api.sendMessage(ALLOWED_CHAT_ID, msg).catch(() => {});
+        void sendMessageWithRetry(bot.api, ALLOWED_CHAT_ID, msg).catch((err) => logger.warn({ err }, 'Memory notification send failed'));
       }
     });
 
@@ -983,7 +1027,7 @@ export function createBot(): Bot {
     // The notifier itself only knows about a "send text" callback, but we can
     // intercept by listening to the synthesisEvents bus directly for the hash.
     attachProposalNotifier((text) => {
-      bot.api.sendMessage(ALLOWED_CHAT_ID, text, { parse_mode: 'HTML' }).catch(() => {});
+      void sendMessageWithRetry(bot.api, ALLOWED_CHAT_ID, text, { parse_mode: 'HTML' }).catch((err) => logger.warn({ err }, 'Proposal notification send failed'));
     });
     // Additionally: when a proposal event fires, also send a tiny follow-up
     // message with inline buttons (mobile-friendly).
@@ -994,7 +1038,7 @@ export function createBot(): Bot {
         const kb = new InlineKeyboard()
           .text('✅ Accept', `skill:accept:${p.hash}`)
           .text('❌ Reject', `skill:reject:${p.hash}`);
-        bot.api.sendMessage(ALLOWED_CHAT_ID, `Quick decision for <b>${p.proposedName}</b>:`, { parse_mode: 'HTML', reply_markup: kb }).catch(() => {});
+        void sendMessageWithRetry(bot.api, ALLOWED_CHAT_ID, `Quick decision for <b>${p.proposedName}</b>:`, { parse_mode: 'HTML', reply_markup: kb }).catch((err) => logger.warn({ err }, 'Proposal keyboard send failed'));
       });
       // Wire the callback_query handler ONCE (idempotent — uses bot.callbackQuery).
       bot.callbackQuery(/^skill:(accept|reject):(.+)$/, async (cqCtx) => {
@@ -1002,6 +1046,9 @@ export function createBot(): Bot {
         const action = m[1]; const hash = m[2];
         if (action === 'accept') {
           const r = promoteProposal(hash);
+          if (r.ok) {
+            try { refreshBotCommands(); } catch (err) { logger.warn({ err }, 'skill accept: command refresh failed'); }
+          }
           await cqCtx.answerCallbackQuery(r.ok ? `Accepted${r.reason ? ` (${r.reason})` : ''}` : `Failed: ${r.reason}`);
         } else {
           discardProposal(hash);
@@ -1013,13 +1060,15 @@ export function createBot(): Bot {
     })().catch((err) => logger.warn({ err }, 'failed to wire inline keyboard for skill proposals'));
   }
 
-  // Register commands in the Telegram menu (built-in + auto-discovered skills)
+  // Register commands in the Telegram menu (built-in + auto-discovered skills).
+  // Extracted so hot-reload can re-run it when a skill is added/edited on disk.
+  const refreshBotCommands = (): void => {
   const builtInCommands = [
     { command: 'start', description: 'Start / onboarding' },
     { command: 'help', description: 'List all commands' },
     { command: 'newchat', description: 'Start a new Claude session' },
     { command: 'stop', description: 'Stop current processing' },
-    { command: 'model', description: 'Switch model (opus/sonnet/haiku)' },
+    { command: 'model', description: 'Switch model (fable/opus/sonnet/haiku)' },
     { command: 'agents', description: 'List 17 agents by lane' },
     { command: 'delegate', description: 'Delegate to agent — /delegate <id> <prompt>' },
     // Life management
@@ -1038,7 +1087,7 @@ export function createBot(): Bot {
     // Secrets & MCP
     { command: 'secrets', description: 'View API keys status' },
     { command: 'set_secret', description: 'Set API key — /set_secret <KEY>' },
-    { command: 'mcp', description: 'List MCP servers (30 available)' },
+    { command: 'mcp', description: 'List MCP servers (36 available)' },
     { command: 'mcp_install', description: 'Install MCP — /mcp_install <name>' },
     // Import & Evolution
     { command: 'import', description: 'Import from OpenClaw/claude-mem/bOS' },
@@ -1054,12 +1103,18 @@ export function createBot(): Bot {
     { command: 'status', description: 'Health check' },
     { command: 'lock', description: 'Lock session (PIN)' },
     { command: 'personality', description: 'Personality style — /personality [preset]' },
+    { command: 'caveman', description: 'Toggle ultra-terse caveman mode' },
   ];
   const skillCommands = discoverSkillCommands();
   const allCommands = [...builtInCommands, ...skillCommands].slice(0, 100); // Telegram limit: 100 commands
   bot.api.setMyCommands(allCommands)
     .then(() => logger.info({ count: skillCommands.length }, 'Registered %d skill commands with Telegram', skillCommands.length))
     .catch((err) => logger.warn({ err }, 'Failed to register bot commands with Telegram'));
+  };
+  refreshBotCommands();
+
+  // Hot-reload: pick up agent/skill edits without a restart.
+  void startHotReload({ onSkillsChanged: refreshBotCommands });
 
   // /help — list available commands
   bot.command('help', (ctx) => {
@@ -1242,9 +1297,11 @@ export function createBot(): Bot {
       return;
     }
 
-    const modelId = AVAILABLE_MODELS[arg];
+    // Known alias, or any full claude-* ID (lets new model families Anthropic
+    // ships be used immediately via /model claude-<whatever> — no code change).
+    const modelId = AVAILABLE_MODELS[arg] ?? (arg.startsWith('claude-') ? arg : undefined);
     if (!modelId) {
-      await ctx.reply(`Unknown model: ${arg}\nAvailable: ${Object.keys(AVAILABLE_MODELS).join(', ')}`);
+      await ctx.reply(`Unknown model: ${arg}\nAvailable: ${Object.keys(AVAILABLE_MODELS).join(', ')}\nOr pass a full model ID: /model claude-...`);
       return;
     }
 
@@ -1489,8 +1546,9 @@ export function createBot(): Bot {
   // /sandbox — sandbox status, prune, smoke test, docker check
   registerSandboxCommands(bot, isAuthorised);
 
-  // /skill_accept, /skill_reject — auto-skill synthesis approval
-  registerSkillSynthesisCommands(bot, isAuthorised);
+  // /skill_accept, /skill_reject — auto-skill synthesis approval.
+  // On accept, refresh the command menu so the skill is usable immediately.
+  registerSkillSynthesisCommands(bot, isAuthorised, refreshBotCommands);
 
   // /export trajectories — JSONL export for fine-tuning / analysis
   registerExportCommands(bot, isAuthorised);
@@ -1612,6 +1670,26 @@ export function createBot(): Bot {
 
     // No session clear — personality is injected via --append-system-prompt on every message
     await ctx.reply(`Switched to <b>${preset.name}</b> preset.\n${preset.description}\n\nNew personality active on next message.`, { parse_mode: 'HTML' });
+  });
+
+  // /caveman — toggle ultra-terse caveman mode on/off. Remembers the preset
+  // that was active before, and restores it when toggled off.
+  bot.command('caveman', async (ctx) => {
+    if (await replyIfLocked(ctx)) return;
+    const { loadUserConfig: loadCfg, saveUserConfig: saveCfg } = await import('./overlay.js');
+    const config = loadCfg() as Record<string, unknown> & { personality?: { preset?: string }; previousPreset?: string };
+    const current = config.personality?.preset || 'default';
+
+    if (current === 'caveman') {
+      const restore = config.previousPreset || 'default';
+      const preset = loadPreset(restore) ?? loadPreset('default')!;
+      saveCfg({ ...config, personality: { ...preset.config, preset: preset.id }, previousPreset: undefined });
+      await ctx.reply(`Caveman mode OFF. Back to <b>${preset.name}</b>.`, { parse_mode: 'HTML' });
+    } else {
+      const caveman = loadPreset('caveman')!;
+      saveCfg({ ...config, personality: { ...caveman.config, preset: 'caveman' }, previousPreset: current });
+      await ctx.reply('Caveman mode ON. Me talk short now. /caveman again to turn off.');
+    }
   });
 
 
@@ -1952,7 +2030,7 @@ export function createBot(): Bot {
             try {
               // Add minimal context so sidecar responds in user's language
               const sidecarPrompt = `[Respond in the same language as the user. Be brief and direct.]\n\n${text}`;
-              const result = await runAgent(sidecarPrompt, undefined, () => void sendTyping(ctx.api, ctx.chat!.id), undefined, 'claude-haiku-4-5');
+              const result = await runAgent(sidecarPrompt, undefined, () => void sendTyping(ctx.api, ctx.chat!.id), undefined, MODELS.haiku);
               if (result.text) {
                 for (const part of splitMessage(formatForTelegram(result.text))) {
                   await ctx.reply(part, { parse_mode: 'HTML' });
@@ -1981,7 +2059,10 @@ export function createBot(): Bot {
       void ctx.reply(summary, { parse_mode: 'HTML' }).catch(() => {});
     } else {
       // Queue is idle — process immediately
-      messageQueue.enqueue(chatIdStr, () => handleMessage(ctx, text));
+      const accepted = messageQueue.enqueue(chatIdStr, () => handleMessage(ctx, text));
+      if (!accepted) {
+        void ctx.reply('⚠️ Too many messages queued — please wait for the current tasks to finish.').catch(() => {});
+      }
     }
   });
 
@@ -2239,6 +2320,7 @@ async function processDashboardMessage(
           result.usage.totalCostUsd,
           result.usage.didCompact,
           AGENT_ID,
+          getAuthMode(),
         );
       } catch (dbErr) {
         logger.error({ err: dbErr }, 'Failed to save token usage');

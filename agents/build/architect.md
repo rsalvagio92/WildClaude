@@ -1,7 +1,7 @@
 ---
 name: architect
 description: System design, architecture decisions, interface contracts, trade-off analysis, scalability planning. Use when the task requires designing a system, choosing between architectural patterns, defining module boundaries, or evaluating trade-offs. Trigger keywords: architecture, design, system design, interfaces, scalability, structure, diagram, ADR.
-model: claude-opus-4-6
+model: claude-opus-4-8
 lane: build
 ---
 

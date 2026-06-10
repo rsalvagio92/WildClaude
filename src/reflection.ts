@@ -13,6 +13,7 @@
 import { getDb } from './db.js';
 import { runAgent } from './agent.js';
 import { logger } from './logger.js';
+import { MODELS } from './models.js';
 
 export interface Reflection {
   id: number;
@@ -132,16 +133,46 @@ Write a JSON object exactly like this (no surrounding markdown fences):
 Patterns should be actionable, surprising, or counter-intuitive. Skip the obvious. If there's not enough data, return patterns: [].
 `.trim();
 
+/**
+ * Extract a JSON object from LLM output. Tries, in order: the raw string,
+ * a ```json fenced block, and a balanced-brace scan from the first '{'
+ * (the old greedy `\{[\s\S]*\}` regex broke whenever the model added prose
+ * after the JSON containing a '}').
+ */
+function extractJsonObject(raw: string): Record<string, unknown> | null {
+  try { return JSON.parse(raw) as Record<string, unknown>; } catch { /* keep trying */ }
+  const fenced = raw.match(/```(?:json)?\s*([\s\S]*?)```/);
+  if (fenced?.[1]) {
+    try { return JSON.parse(fenced[1]) as Record<string, unknown>; } catch { /* keep trying */ }
+  }
+  const start = raw.indexOf('{');
+  if (start === -1) return null;
+  let depth = 0, inStr = false, esc = false;
+  for (let i = start; i < raw.length; i++) {
+    const ch = raw[i];
+    if (esc) { esc = false; continue; }
+    if (ch === '\\') { esc = inStr; continue; }
+    if (ch === '"') { inStr = !inStr; continue; }
+    if (inStr) continue;
+    if (ch === '{') depth++;
+    else if (ch === '}') {
+      depth--;
+      if (depth === 0) {
+        try { return JSON.parse(raw.slice(start, i + 1)) as Record<string, unknown>; } catch { return null; }
+      }
+    }
+  }
+  return null;
+}
+
 function parseReflection(raw: string): { summary: string; patterns: string[] } | null {
-  // Extract first JSON object
-  const m = raw.match(/\{[\s\S]*\}/);
-  if (!m) return null;
-  try {
-    const obj = JSON.parse(m[0]) as { summary?: string; patterns?: unknown };
-    if (typeof obj.summary !== 'string') return null;
-    const patterns = Array.isArray(obj.patterns) ? obj.patterns.filter((p): p is string => typeof p === 'string') : [];
-    return { summary: obj.summary, patterns };
-  } catch { return null; }
+  const obj = extractJsonObject(raw) as { summary?: string; patterns?: unknown } | null;
+  if (!obj || typeof obj.summary !== 'string') {
+    logger.warn({ raw: raw.slice(0, 500) }, 'reflection: could not parse model output as JSON');
+    return null;
+  }
+  const patterns = Array.isArray(obj.patterns) ? obj.patterns.filter((p): p is string => typeof p === 'string') : [];
+  return { summary: obj.summary, patterns };
 }
 
 export async function generateReflection(period: 'day' | 'week'): Promise<Reflection | null> {
@@ -152,7 +183,7 @@ export async function generateReflection(period: 'day' | 'week'): Promise<Reflec
     return null;
   }
 
-  const result = await runAgent(REFLECTION_PROMPT(period, sample), undefined, () => {}, undefined, 'claude-haiku-4-5');
+  const result = await runAgent(REFLECTION_PROMPT(period, sample), undefined, () => {}, undefined, MODELS.haiku);
   const parsed = parseReflection(result.text ?? '');
   if (!parsed) {
     logger.warn({ period }, 'reflection: failed to parse model output');

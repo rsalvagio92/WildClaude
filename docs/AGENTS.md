@@ -33,7 +33,7 @@ Use the Agent Hub module to see agent status and delegate tasks.
 
 ## Build Lane
 
-### @architect (Opus 4.6)
+### @architect (Opus 4.8)
 **Triggers:** architecture, design, system design, interfaces, scalability, structure, ADR
 
 System design and architecture decisions. Produces ADR-style outputs with:
@@ -69,7 +69,7 @@ Best for: Writing tests, improving coverage, TDD, verification strategies.
 
 ## Review Lane
 
-### @code-reviewer (Opus 4.6)
+### @code-reviewer (Opus 4.8)
 **Triggers:** review, code review, PR review, feedback, quality check, pre-merge
 
 Three-tier severity model: BLOCKER / SUGGESTION / NIT. Reads full diff before commenting.
@@ -112,14 +112,14 @@ Best for: CSV analysis, data visualization, statistical analysis, trend identifi
 
 ## Coordination Lane
 
-### @orchestrator (Opus 4.6)
+### @orchestrator (Opus 4.8)
 **Triggers:** orchestrate, coordinate, delegate, parallel, multi-step, complex task, team
 
 Multi-agent coordination and task decomposition. Delegates rather than doing specialist work.
 
 Best for: Complex multi-step tasks, coordinating multiple agents, project management.
 
-### @critic (Opus 4.6)
+### @critic (Opus 4.8)
 **Triggers:** critique, challenge, devil's advocate, review assumptions, find gaps, risks
 
 Adversarial review and assumption testing. Distinguishes critical / significant / minor findings.
@@ -137,7 +137,7 @@ Best for: Adding new external service integrations, configuring API endpoints, b
 
 ## Life Lane
 
-### @coach (Opus 4.6)
+### @coach (Opus 4.8)
 **Triggers:** coach, goal, decide, review, stuck, vision, motivation, priorities, weekly review
 
 Life coaching with questions-first approach. Anchors to next actions, holds the long view.
@@ -215,4 +215,4 @@ You are a [role] specializing in [domain].
 |-----------|-------|------|---------|
 | Routine | claude-haiku-4-5 | ~$0.25/MTok | Logging, simple lookups, classification |
 | Standard | claude-sonnet-4-6 | ~$3/MTok | Code, search, standard reasoning |
-| Complex | claude-opus-4-6 | ~$15/MTok | Architecture, review, planning, creative |
+| Complex | claude-opus-4-8 | ~$15/MTok | Architecture, review, planning, creative |

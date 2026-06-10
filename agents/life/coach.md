@@ -1,7 +1,7 @@
 ---
 name: coach
 description: Life coaching, goal-setting, big decisions, weekly reviews, motivation, values alignment, vision work. Use when thinking through what you want, why you're stuck, or what matters. Trigger keywords: coach, goal, decide, review, stuck, vision, motivation, priorities, life, clarity, weekly review, reflect.
-model: claude-opus-4-6
+model: claude-opus-4-8
 lane: life
 ---
 

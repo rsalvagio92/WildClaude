@@ -1,7 +1,7 @@
 ---
 name: code-reviewer
 description: Comprehensive code review covering correctness, maintainability, design quality, and patterns. Use before merging significant changes or when a second pair of eyes is needed on implementation quality. Trigger keywords: review, code review, PR review, check my code, feedback, critique.
-model: claude-opus-4-6
+model: claude-opus-4-8
 lane: review
 ---
 

@@ -25,7 +25,7 @@
 │  ┌──────▼─────────────────▼───────────────────▼───────────┐ │
 │  │         Claude CLI (claude -p --output-format           │ │
 │  │         stream-json) → subscription auth               │ │
-│  │  Opus 4.6 (complex) │ Sonnet 4.6 (routine) │ Haiku 4.5│ │
+│  │  Opus 4.8 (complex) │ Sonnet 4.6 (routine) │ Haiku 4.5│ │
 │  │  Falls back to SDK if ANTHROPIC_API_KEY is set         │ │
 │  └────────────────────────────────────────────────────────┘ │
 │                                                              │
@@ -37,7 +37,7 @@
 │                                                              │
 │  ┌─────────────┐  ┌────────────┐  ┌────────────────────┐   │
 │  │ Secrets     │  │ MCP Manager│  │ Import System      │   │
-│  │ (encrypted) │  │ (31 servers│  │ (OpenClaw/claude-  │   │
+│  │ (encrypted) │  │ (36 servers│  │ (OpenClaw/claude-  │   │
 │  │             │  │  registry) │  │  mem/bOS/Claude    │   │
 │  └─────────────┘  └────────────┘  └────────────────────┘   │
 └─────────────────────────────────────────────────────────────┘
@@ -79,7 +79,7 @@ Override user data location with env var: `WILD_DATA_DIR=/custom/path`
 - **Telegram:** Grammy 1.34+
 - **Database:** better-sqlite3 (SQLite with WAL mode, FTS5)
 - **Web:** Hono (backend) + HTMX + Alpine.js + TailwindCSS (dashboard)
-- **AI Models:** claude-opus-4-6 / claude-sonnet-4-6 / claude-haiku-4-5
+- **AI Models:** claude-opus-4-8 / claude-sonnet-4-6 / claude-haiku-4-5
 - **Memory:** Fully local (no external APIs) + .md file persistence
 - **Voice:** Groq Whisper (STT) + ElevenLabs (TTS)
 - **Deployment:** `wildclaude` CLI + systemd service
@@ -104,11 +104,13 @@ Every message passes through a Haiku classifier before dispatching:
 |------|-------|-----------|------|
 | SIMPLE | haiku-4-5 | Status, lookups, greetings, yes/no | ~$0.25/MTok |
 | MEDIUM | sonnet-4-6 | Code tasks, searches, edits, standard Q&A | ~$3/MTok |
-| COMPLEX | opus-4-6 | Architecture, creative, life planning, system design | ~$15/MTok |
+| COMPLEX | opus-4-8 | Architecture, creative, life planning, system design | ~$15/MTok |
 
 Without `ANTHROPIC_API_KEY`, pattern matching is used (works with Claude subscription via CLI). With it, Haiku is called for classification (~$0.001, ~200ms).
 
-**Overrides:** `/model opus` forces a specific model per-chat. Agent configs specify model per-agent.
+**Overrides:** `/model opus` forces a specific model per-chat (`fable`, `opus`, `sonnet`, `haiku`, or any full `claude-*` ID — new model families work without a code change). Agent configs specify model per-agent. Canonical IDs live in `src/models.ts` (`MODELS`, `SELECTABLE_MODELS`, `normalizeModel`). Claude Fable 5 (`claude-fable-5`, ~2x Opus price) is available via override; the router keeps COMPLEX on Opus for cost.
+
+The Claude CLI is auto-updated by the weekly maintenance cron (set `CLAUDE_CLI_AUTO_UPDATE=false` for check-only).
 
 ## Concurrent Message Handling
 
@@ -237,7 +239,7 @@ Loop (max 20 iterations):
 
 ## MCP Manager
 
-31 known MCP servers in a registry (`src/mcp-manager.ts`). Install from Telegram:
+36 known MCP servers in a registry (`src/mcp-manager.ts`). Install from Telegram:
 
 ```
 /mcp               — list all
@@ -320,7 +322,7 @@ A self-contained set of modules added in 2026-05 that move WildClaude from "pers
 - **Memory blocks** ([src/memory-blocks.ts](src/memory-blocks.ts)) — Mem0-style scoping (user/session/agent) + Letta-style editable blocks. Semantic search via Gemini text-embedding-004 (cosine ≥ 0.55) with keyword fallback. Multi-modal attachments (image/audio/file) with auto-captioning via Claude vision.
 - **Trace Inspector** ([src/trace-inspector.ts](src/trace-inspector.ts)) — per-session timelines from `conversation_log` + `token_usage`, 30-day cost breakdown by agent. Timestamps normalised to ms at API boundary (legacy tables store seconds).
 - **TokenJuice** ([src/token-juice.ts](src/token-juice.ts)) — output compression layer wired into browser-mcp + vision-mcp + gmail-mcp. HTML→Markdown, URL shortening, dedup, truncate. Tracks bytes-saved + dollar-saved stats.
-- **Cost budget** ([src/cost-budget.ts](src/cost-budget.ts)) — `MONTHLY_BUDGET_USD` env. Alerts at 80% / 100%. `shouldDowngradeForBudget()` makes the router auto-downgrade to Haiku once the cap is hit.
+- **Cost budget** ([src/cost-budget.ts](src/cost-budget.ts)) — `MONTHLY_BUDGET_USD` env. Alerts at 80% / 100%. `shouldDowngradeForBudget()` makes the router auto-downgrade to Haiku once the cap is hit. Only `auth_mode='api'` rows in `token_usage` count toward the budget — subscription/CLI usage is plan-covered and reported separately in `/budget`.
 
 ### Workflows, debate, reflection
 
@@ -398,6 +400,7 @@ For activation flags and config keys, see [docs/HERMES.md](docs/HERMES.md).
 | `/newchat` | Clear session, start fresh |
 | `/model <opus\|sonnet\|haiku>` | Switch model for this chat |
 | `/personality` | Show or switch personality preset |
+| `/caveman` | Toggle ultra-terse caveman mode (remembers previous preset) |
 | `/voice` | Toggle voice responses |
 | `/secrets` | Show secrets status |
 | `/set_secret <KEY>` | Set a secret (encrypted) |
@@ -416,7 +419,7 @@ For activation flags and config keys, see [docs/HERMES.md](docs/HERMES.md).
 | `/agents` | List all agents |
 | `/delegate <agent> <prompt>` | Route to specific agent |
 | `/ralph <goal>` | Start autonomous dev loop |
-| `/ralph status` / `/ralph stop` | Ralph control |
+| `/ralph status` / `/ralph stop` / `/ralph resume` | Ralph control (resume continues a crashed run) |
 | `/create_skill <name> <desc>` | Create new skill |
 | `/create_agent <id> <lane> <desc>` | Create new agent |
 | `/evolution` | View evolution log |
@@ -498,7 +501,7 @@ wildclaude/
 │   ├── db.ts                 # SQLite schema + queries
 │   ├── paths.ts              # Data separation (PROJECT_ROOT vs USER_DATA_DIR)
 │   ├── secrets.ts            # Encrypted secrets store
-│   ├── mcp-manager.ts        # 31-server MCP registry
+│   ├── mcp-manager.ts        # 36-server MCP registry
 │   ├── importer.ts           # Import from previous assistants
 │   ├── cli-onboarding.ts     # Terminal setup wizard (first run)
 │   ├── onboarding.ts         # Telegram onboarding flow
@@ -519,7 +522,7 @@ wildclaude/
 │   ├── overlay.ts            # Overlay resolution (user overrides project defaults)
 │   ├── external-dashboards.ts # External service dashboard connections
 │   ├── dashboard.ts          # Hono web server
-│   ├── dashboard-html.ts     # Dark-mode SPA (11 modules)
+│   ├── dashboard-html.ts     # Dark-mode SPA (17 modules)
 │   ├── config.ts             # Environment config
 │   ├── whatsapp.ts           # WhatsApp bridge
 │   └── slack.ts              # Slack bridge

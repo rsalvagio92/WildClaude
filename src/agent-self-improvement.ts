@@ -20,6 +20,7 @@ import { getDb } from './db.js';
 import { runAgent } from './agent.js';
 import { USER_DATA_DIR, resolveAgentPath } from './paths.js';
 import { logger } from './logger.js';
+import { MODELS } from './models.js';
 
 const PROPOSAL_DIR = path.join(USER_DATA_DIR, 'agents', '_self-improvement-proposals');
 
@@ -99,7 +100,7 @@ export async function generateAgentProposal(sample: AgentFailureSample): Promise
   if (!defPath || !fs.existsSync(defPath)) return null;
   const def = fs.readFileSync(defPath, 'utf8');
 
-  const result = await runAgent(PROMPT(sample, def), undefined, () => {}, undefined, 'claude-opus-4-6');
+  const result = await runAgent(PROMPT(sample, def), undefined, () => {}, undefined, MODELS.opus);
   const newDef = (result.text ?? '').trim();
   if (!newDef.startsWith('---')) return null;
 

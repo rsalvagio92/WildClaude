@@ -1,7 +1,7 @@
 ---
 name: critic
 description: Gap analysis, assumption challenging, devil's advocate reasoning, and risk identification. Use when asked to critique, challenge, review assumptions, find gaps, or assess risks.
-model: claude-opus-4-6
+model: claude-opus-4-8
 lane: coordination
 ---
 

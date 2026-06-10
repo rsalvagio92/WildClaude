@@ -16,6 +16,8 @@ import path from 'path';
 import { USER_DATA_DIR } from './paths.js';
 import { SANDBOX_PRUNE_AGE_MS } from './config.js';
 import { pruneScratchDirs } from './sandbox/local.js';
+import { runDbMaintenance } from './db.js';
+import { runCliUpdateCheck } from './cli-update.js';
 import { logger } from './logger.js';
 
 const DAY = 24 * 3600 * 1000;
@@ -86,6 +88,20 @@ export async function runMaintenanceCleanup(): Promise<string> {
   results.push(pruneFiles(path.join(USER_DATA_DIR, 'finetune'), 60 * DAY, ['.jsonl']));
   results.push(pruneFiles(path.join(USER_DATA_DIR, 'session-handoffs'), 60 * DAY, ['.md']));
 
+  // Database: trim audit_log to 90 days + truncate the WAL so it can't grow
+  // unbounded on long-running devices.
+  let dbSummary = '';
+  try {
+    const db = runDbMaintenance(90);
+    dbSummary = `, db: ${db.auditDeleted} audit row(s) pruned, WAL checkpointed (${db.walPages} pages)`;
+  } catch (err) {
+    logger.warn({ err }, 'maintenance: db maintenance failed');
+  }
+
+  // Keep the Claude CLI current — stale CLI means stale models.
+  // CLAUDE_CLI_AUTO_UPDATE=false switches this to check-only.
+  const cliSummary = runCliUpdateCheck();
+
   const totalRemoved = results.reduce((a, r) => a + r.removed, 0);
   const totalBytes = results.reduce((a, r) => a + r.bytesFreed, 0);
   const summary = results
@@ -94,5 +110,5 @@ export async function runMaintenanceCleanup(): Promise<string> {
     .join(', ') || 'nothing to prune';
 
   logger.info({ totalRemoved, totalBytes, results }, 'maintenance: cleanup done');
-  return `${totalRemoved} item(s), ${fmt(totalBytes)} freed — ${summary}`;
+  return `${totalRemoved} item(s), ${fmt(totalBytes)} freed — ${summary}${dbSummary}\n${cliSummary}`;
 }

@@ -96,6 +96,8 @@ export function deleteOverlayFile(subdir: string, filename: string): boolean {
 // ── User config overlay ──────────────────────────────────────────────
 
 export interface UserConfig {
+  /** Preset that was active before caveman mode was toggled on (restored by /caveman off) */
+  previousPreset?: string;
   /** Custom dashboard service definitions */
   dashboards?: Array<{
     id: string;

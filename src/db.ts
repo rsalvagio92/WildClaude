@@ -41,28 +41,38 @@ export function encryptField(plaintext: string): string {
 
 /**
  * Decrypt a string produced by encryptField().
- * Returns the original plaintext. If decryption fails (wrong key, tampered),
- * returns the raw input unchanged (graceful fallback for pre-encryption data).
+ * Returns the original plaintext. Legacy pre-encryption plaintext (anything
+ * not in iv:authTag:data hex format) is returned unchanged. A value that IS
+ * in the encrypted format but fails to decrypt means the key is wrong or the
+ * data is corrupted — that throws instead of silently returning garbage.
  */
 export function decryptField(ciphertext: string): string {
-  try {
-    const parts = ciphertext.split(':');
-    if (parts.length !== 3) return ciphertext; // Not encrypted, return as-is
-    const [ivHex, authTagHex, dataHex] = parts;
-    if (!ivHex || !authTagHex || !dataHex) return ciphertext;
+  const parts = ciphertext.split(':');
+  if (parts.length !== 3) return ciphertext; // Not encrypted, return as-is
+  const [ivHex, authTagHex, dataHex] = parts;
+  // encryptField always emits a 12-byte IV and 16-byte auth tag as hex.
+  // Anything else (e.g. plaintext like "10:30:00") is legacy data.
+  const isEncryptedFormat =
+    /^[0-9a-f]{24}$/i.test(ivHex ?? '') &&
+    /^[0-9a-f]{32}$/i.test(authTagHex ?? '') &&
+    /^([0-9a-f]{2})*$/i.test(dataHex ?? '');
+  if (!isEncryptedFormat) return ciphertext;
 
+  try {
     const key = getEncryptionKey();
-    const iv = Buffer.from(ivHex, 'hex');
-    const authTag = Buffer.from(authTagHex, 'hex');
-    const data = Buffer.from(dataHex, 'hex');
+    const iv = Buffer.from(ivHex!, 'hex');
+    const authTag = Buffer.from(authTagHex!, 'hex');
+    const data = Buffer.from(dataHex!, 'hex');
 
     const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv);
     decipher.setAuthTag(authTag);
     const decrypted = Buffer.concat([decipher.update(data), decipher.final()]);
     return decrypted.toString('utf8');
-  } catch {
-    // Decryption failed: probably pre-encryption plaintext data
-    return ciphertext;
+  } catch (err) {
+    throw new Error(
+      'decryptField failed on encrypted data — DB_ENCRYPTION_KEY is wrong or the row is corrupted: ' +
+      (err instanceof Error ? err.message : String(err)),
+    );
   }
 }
 
@@ -396,6 +406,16 @@ function createSchema(database: Database.Database): void {
     );
     CREATE INDEX IF NOT EXISTS idx_mood_log_time ON mood_log(at DESC);
 
+    -- Messages buffered while a task was running. Persisted so a crash
+    -- doesn't drop them; replayed into the buffer on next startup.
+    CREATE TABLE IF NOT EXISTS buffered_messages (
+      id         INTEGER PRIMARY KEY AUTOINCREMENT,
+      chat_id    TEXT NOT NULL,
+      text       TEXT NOT NULL,
+      created_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_buffered_chat ON buffered_messages(chat_id);
+
     CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
       summary,
       raw_text,
@@ -524,25 +544,35 @@ function runMigrations(database: Database.Database): void {
     database.exec(`ALTER TABLE token_usage ADD COLUMN context_tokens INTEGER NOT NULL DEFAULT 0`);
   }
 
+  // Auth mode per turn: 'subscription' (CLI/OAuth — no marginal cost) vs
+  // 'api' (ANTHROPIC_API_KEY — real billing). Budget enforcement only counts
+  // 'api' rows. Legacy rows stay NULL (mode unknown).
+  if (!cols.some((c) => c.name === 'auth_mode')) {
+    database.exec(`ALTER TABLE token_usage ADD COLUMN auth_mode TEXT`);
+  }
+
   // Multi-agent: migrate sessions table to composite primary key (chat_id, agent_id)
   // Check if PK is composite by looking at pk column count in pragma
   const sessionCols = database.prepare(`PRAGMA table_info(sessions)`).all() as Array<{ name: string; pk: number }>;
   const pkCount = sessionCols.filter((c) => c.pk > 0).length;
   if (pkCount < 2) {
-    // Need to recreate table with composite PK
-    database.exec(`
-      CREATE TABLE sessions_new (
-        chat_id    TEXT NOT NULL,
-        agent_id   TEXT NOT NULL DEFAULT 'main',
-        session_id TEXT NOT NULL,
-        updated_at TEXT NOT NULL,
-        PRIMARY KEY (chat_id, agent_id)
-      );
-      INSERT OR IGNORE INTO sessions_new (chat_id, agent_id, session_id, updated_at)
-        SELECT chat_id, COALESCE(agent_id, 'main'), session_id, updated_at FROM sessions;
-      DROP TABLE sessions;
-      ALTER TABLE sessions_new RENAME TO sessions;
-    `);
+    // Need to recreate table with composite PK. Transactional so a crash
+    // mid-rebuild can't leave the DB without a sessions table.
+    database.transaction(() => {
+      database.exec(`
+        CREATE TABLE sessions_new (
+          chat_id    TEXT NOT NULL,
+          agent_id   TEXT NOT NULL DEFAULT 'main',
+          session_id TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          PRIMARY KEY (chat_id, agent_id)
+        );
+        INSERT OR IGNORE INTO sessions_new (chat_id, agent_id, session_id, updated_at)
+          SELECT chat_id, COALESCE(agent_id, 'main'), session_id, updated_at FROM sessions;
+        DROP TABLE sessions;
+        ALTER TABLE sessions_new RENAME TO sessions;
+      `);
+    })();
   }
 
   const taskCols = database.prepare(`PRAGMA table_info(scheduled_tasks)`).all() as Array<{ name: string }>;
@@ -584,6 +614,9 @@ function runMigrations(database: Database.Database): void {
   const isOldSchema = memColNames.includes('sector') && !memColNames.includes('importance');
 
   if (isOldSchema) {
+    // Transactional: a crash between RENAME and CREATE would otherwise leave
+    // no memories table at all on next boot.
+    database.transaction(() => {
     database.exec(`
       -- Drop old FTS triggers first
       DROP TRIGGER IF EXISTS memories_fts_insert;
@@ -662,6 +695,7 @@ function runMigrations(database: Database.Database): void {
           VALUES (new.id, new.summary, new.raw_text, new.entities, new.topics);
       END;
     `);
+    })();
     logger.info('Memory V2 migration: backed up old memories, created new schema');
   }
 
@@ -738,20 +772,22 @@ function runMigrations(database: Database.Database): void {
   const missionCols = database.prepare(`PRAGMA table_info(mission_tasks)`).all() as Array<{ name: string; notnull: number }>;
   const assignedCol = missionCols.find((c) => c.name === 'assigned_agent');
   if (assignedCol && assignedCol.notnull === 1) {
-    database.exec(`
-      CREATE TABLE mission_tasks_new (
-        id TEXT PRIMARY KEY, title TEXT NOT NULL, prompt TEXT NOT NULL,
-        assigned_agent TEXT, status TEXT NOT NULL DEFAULT 'queued',
-        result TEXT, error TEXT, created_by TEXT NOT NULL DEFAULT 'dashboard',
-        priority INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL,
-        started_at INTEGER, completed_at INTEGER
-      );
-      INSERT INTO mission_tasks_new SELECT * FROM mission_tasks;
-      DROP TABLE mission_tasks;
-      ALTER TABLE mission_tasks_new RENAME TO mission_tasks;
-      CREATE INDEX IF NOT EXISTS idx_mission_status
-        ON mission_tasks(assigned_agent, status, priority DESC, created_at ASC);
-    `);
+    database.transaction(() => {
+      database.exec(`
+        CREATE TABLE mission_tasks_new (
+          id TEXT PRIMARY KEY, title TEXT NOT NULL, prompt TEXT NOT NULL,
+          assigned_agent TEXT, status TEXT NOT NULL DEFAULT 'queued',
+          result TEXT, error TEXT, created_by TEXT NOT NULL DEFAULT 'dashboard',
+          priority INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL,
+          started_at INTEGER, completed_at INTEGER
+        );
+        INSERT INTO mission_tasks_new SELECT * FROM mission_tasks;
+        DROP TABLE mission_tasks;
+        ALTER TABLE mission_tasks_new RENAME TO mission_tasks;
+        CREATE INDEX IF NOT EXISTS idx_mission_status
+          ON mission_tasks(assigned_agent, status, priority DESC, created_at ASC);
+      `);
+    })();
     logger.info('Migration: made mission_tasks.assigned_agent nullable');
   }
 
@@ -1697,12 +1733,13 @@ export function saveTokenUsage(
   costUsd: number,
   didCompact: boolean,
   agentId = 'main',
+  authMode: 'subscription' | 'api' = 'subscription',
 ): void {
   const now = Math.floor(Date.now() / 1000);
   getDb().prepare(
-    `INSERT INTO token_usage (chat_id, session_id, input_tokens, output_tokens, cache_read, context_tokens, cost_usd, did_compact, created_at, agent_id)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-  ).run(chatId, sessionId ?? null, inputTokens, outputTokens, cacheRead, contextTokens, costUsd, didCompact ? 1 : 0, now, agentId);
+    `INSERT INTO token_usage (chat_id, session_id, input_tokens, output_tokens, cache_read, context_tokens, cost_usd, did_compact, created_at, agent_id, auth_mode)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(chatId, sessionId ?? null, inputTokens, outputTokens, cacheRead, contextTokens, costUsd, didCompact ? 1 : 0, now, agentId, authMode);
 }
 
 export interface SessionTokenSummary {
@@ -2379,4 +2416,57 @@ export function getRecentBlockedActions(limit = 10): AuditLogEntry[] {
   return getDb().prepare(
     `SELECT * FROM audit_log WHERE blocked = 1 ORDER BY created_at DESC LIMIT ?`,
   ).all(limit) as AuditLogEntry[];
+}
+
+/**
+ * Periodic database maintenance — run from the weekly cleanup cron.
+ *
+ * On long-running deployments (e.g. a Raspberry Pi) two things grow unbounded:
+ *   1. The WAL file — never shrinks on its own under continuous writes.
+ *   2. audit_log — one row per security-relevant action, forever.
+ *
+ * This trims audit_log to `retentionDays`, then runs a TRUNCATE checkpoint to
+ * fold the WAL back into the main DB and reset the WAL file to zero bytes.
+ * created_at is stored in seconds (strftime('%s','now')).
+ */
+export function runDbMaintenance(retentionDays = 90): { auditDeleted: number; walPages: number } {
+  const db = getDb();
+  const cutoff = Math.floor(Date.now() / 1000) - retentionDays * 24 * 3600;
+
+  const res = db.prepare('DELETE FROM audit_log WHERE created_at < ?').run(cutoff);
+  const auditDeleted = res.changes ?? 0;
+
+  // wal_checkpoint(TRUNCATE) returns [busy, log, checkpointed]. After deletes,
+  // checkpointing reclaims the freed pages and shrinks the -wal file.
+  let walPages = 0;
+  try {
+    const cp = db.pragma('wal_checkpoint(TRUNCATE)') as Array<{ busy: number; log: number; checkpointed: number }>;
+    walPages = cp?.[0]?.checkpointed ?? 0;
+  } catch { /* not in WAL mode (e.g. :memory: test DB) — nothing to checkpoint */ }
+
+  return { auditDeleted, walPages };
+}
+
+// ── Buffered messages (crash recovery for the message queue) ──────────────
+
+export function insertBufferedMessage(chatId: string, text: string): void {
+  getDb().prepare('INSERT INTO buffered_messages (chat_id, text, created_at) VALUES (?, ?, ?)')
+    .run(chatId, text, Math.floor(Date.now() / 1000));
+}
+
+export function deleteBufferedMessages(chatId: string): void {
+  getDb().prepare('DELETE FROM buffered_messages WHERE chat_id = ?').run(chatId);
+}
+
+/** Load all persisted buffered messages, oldest first, grouped by chat. */
+export function loadBufferedMessages(): Map<string, string[]> {
+  const rows = getDb().prepare('SELECT chat_id, text FROM buffered_messages ORDER BY id ASC')
+    .all() as Array<{ chat_id: string; text: string }>;
+  const byChat = new Map<string, string[]>();
+  for (const row of rows) {
+    const list = byChat.get(row.chat_id) ?? [];
+    list.push(row.text);
+    byChat.set(row.chat_id, list);
+  }
+  return byChat;
 }

@@ -12,7 +12,7 @@ agents:
       System design, architecture decisions, interface contracts, trade-off
       analysis, scalability planning. Trigger keywords: architecture, design,
       system design, interfaces, scalability, structure, diagram, ADR.
-    model: claude-opus-4-6
+    model: claude-opus-4-8
     lane: build
 
   - id: coder
@@ -50,7 +50,7 @@ agents:
       Comprehensive code review — correctness, design quality, maintainability,
       performance, conventions. Trigger keywords: review, code review, PR review,
       feedback, quality check, pre-merge.
-    model: claude-opus-4-6
+    model: claude-opus-4-8
     lane: review
 
   - id: security-reviewer
@@ -99,7 +99,7 @@ agents:
       Multi-agent coordination, task decomposition, delegation. Trigger keywords:
       orchestrate, coordinate, delegate, parallel, multi-step, manage agents,
       complex task, team.
-    model: claude-opus-4-6
+    model: claude-opus-4-8
     lane: coordination
 
   - id: critic
@@ -108,7 +108,7 @@ agents:
       Gap analysis, assumption challenging, risk identification. Trigger keywords:
       critique, challenge, devil's advocate, review assumptions, find gaps,
       risks, stress-test, what could go wrong.
-    model: claude-opus-4-6
+    model: claude-opus-4-8
     lane: coordination
 
   - id: dashboard-builder
@@ -129,7 +129,7 @@ agents:
       Life coaching, goal-setting, big decisions, weekly reviews, motivation,
       values alignment. Trigger keywords: coach, goal, decide, review, stuck,
       vision, motivation, priorities, life, clarity, weekly review, reflect.
-    model: claude-opus-4-6
+    model: claude-opus-4-8
     lane: life
 
   - id: organizer

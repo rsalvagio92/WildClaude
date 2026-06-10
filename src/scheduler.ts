@@ -138,7 +138,7 @@ async function runDueTasks(): Promise<void> {
     // in-flight user message to finish before running. This prevents
     // two Claude processes from hitting the same session simultaneously.
     const chatId = ALLOWED_CHAT_ID || 'scheduler';
-    messageQueue.enqueue(chatId, async () => {
+    const accepted = messageQueue.enqueue(chatId, async () => {
       const abortController = new AbortController();
       const timeout = setTimeout(() => abortController.abort(), TASK_TIMEOUT_MS);
 
@@ -146,7 +146,6 @@ async function runDueTasks(): Promise<void> {
         // ── Internal sentinel tasks: don't call the LLM, route to local handlers ──
         if (task.prompt.startsWith('__internal:')) {
           await handleInternalSentinel(task.prompt, sender);
-          clearTimeout(timeout);
           updateTaskAfterRun(task.id, nextRun, '(internal sentinel)', 'success');
           return;
         }
@@ -155,7 +154,6 @@ async function runDueTasks(): Promise<void> {
 
         // Run as a fresh agent call (no session — scheduled tasks are autonomous)
         const result = await runAgent(task.prompt, undefined, () => {}, undefined, undefined, abortController);
-        clearTimeout(timeout);
 
         if (result.aborted) {
           updateTaskAfterRun(task.id, nextRun, 'Timed out after 10 minutes', 'timeout');
@@ -180,7 +178,6 @@ async function runDueTasks(): Promise<void> {
 
         logger.info({ taskId: task.id, nextRun }, 'Task complete, next run scheduled');
       } catch (err) {
-        clearTimeout(timeout);
         const errMsg = err instanceof Error ? err.message : String(err);
         updateTaskAfterRun(task.id, nextRun, errMsg.slice(0, 500), 'failed');
 
@@ -191,9 +188,17 @@ async function runDueTasks(): Promise<void> {
           // ignore send failure
         }
       } finally {
+        clearTimeout(timeout);
         runningTaskIds.delete(task.id);
       }
     });
+    if (!accepted) {
+      // Queue full — release the in-memory lock so the task can fire on a
+      // later tick instead of being stuck "running" forever.
+      runningTaskIds.delete(task.id);
+      updateTaskAfterRun(task.id, nextRun, 'Skipped: message queue full', 'failed');
+      logger.warn({ taskId: task.id }, 'Scheduled task skipped — message queue full');
+    }
   }
 
   // Also check for queued mission tasks (one-shot async tasks from Mission Control)
@@ -211,13 +216,12 @@ async function runDueMissionTasks(): Promise<void> {
   logger.info({ missionId: mission.id, title: mission.title }, 'Running mission task');
 
   const chatId = ALLOWED_CHAT_ID || 'mission';
-  messageQueue.enqueue(chatId, async () => {
+  const accepted = messageQueue.enqueue(chatId, async () => {
     const abortController = new AbortController();
     const timeout = setTimeout(() => abortController.abort(), TASK_TIMEOUT_MS);
 
     try {
       const result = await runAgent(mission.prompt, undefined, () => {}, undefined, undefined, abortController);
-      clearTimeout(timeout);
 
       if (result.aborted) {
         completeMissionTask(mission.id, null, 'failed', 'Timed out after 10 minutes');
@@ -251,14 +255,19 @@ async function runDueMissionTasks(): Promise<void> {
         }),
       });
     } catch (err) {
-      clearTimeout(timeout);
       const errMsg = err instanceof Error ? err.message : String(err);
       completeMissionTask(mission.id, null, 'failed', errMsg.slice(0, 500));
       logger.error({ err, missionId: mission.id }, 'Mission task failed');
     } finally {
+      clearTimeout(timeout);
       runningTaskIds.delete(missionKey);
     }
   });
+  if (!accepted) {
+    runningTaskIds.delete(missionKey);
+    completeMissionTask(mission.id, null, 'failed', 'Skipped: message queue full');
+    logger.warn({ missionId: mission.id }, 'Mission task skipped — message queue full');
+  }
 }
 
 export function computeNextRun(cronExpression: string): number {

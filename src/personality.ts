@@ -125,6 +125,27 @@ export const BUILT_IN_PRESETS: Preset[] = [
       pushback: 'gentle',
     },
   },
+  {
+    id: 'caveman',
+    name: 'Caveman',
+    description: 'Ultra-terse caveman speak — minimum tokens, maximum signal. Toggle with /caveman',
+    source: 'built-in',
+    config: {
+      preset: 'caveman',
+      tone: 'direct',
+      responseLength: 'brief',
+      humor: 2,
+      emoji: false,
+      language: 'auto',
+      pushback: 'normal',
+      customPrompt:
+        'CAVEMAN MODE. Speak like caveman: few words, no filler, no articles, no pleasantries, no transitions. ' +
+        'Example: "Build done. Tests pass. Two files changed." ' +
+        'Precision stays: file names, commands, numbers, technical terms exact. ' +
+        'Code blocks stay normal code — caveman applies to prose only. ' +
+        'One line when one line enough. Never explain caveman mode, just speak it.',
+    },
+  },
 ];
 
 // ── Defaults ─────────────────────────────────────────────────────────

@@ -21,6 +21,7 @@ import { PROJECT_ROOT, SANDBOX_DEFAULT } from './config.js';
 import { logger } from './logger.js';
 import { createMissionTask, completeMissionTask } from './db.js';
 import { createSandbox, Sandbox, SandboxKind } from './sandbox/index.js';
+import { USER_DATA_DIR } from './paths.js';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -63,6 +64,51 @@ const status: RalphStatus = {
 
 /** Rolling window of call timestamps for rate limiting. */
 const callTimestamps: number[] = [];
+
+// ── Crash-resume state ───────────────────────────────────────────────────────
+// Loop state lives in module variables, so a process crash mid-loop used to
+// lose everything (the user had to re-run the whole goal). We snapshot the
+// plan + session after every iteration to a stable file in USER_DATA_DIR
+// (NOT the sandbox scratch dir, which gets pruned). The file is removed on
+// any orderly exit — if it's present at startup, the previous run crashed
+// and /ralph resume can continue from the last completed task.
+
+export interface RalphPersistedState {
+  goal: string;
+  config: RalphConfig;
+  planContent: string;
+  sessionId?: string;
+  iteration: number;
+  startedAt: number;
+  updatedAt: number;
+}
+
+const RALPH_STATE_FILE = path.join(USER_DATA_DIR, 'ralph-state.json');
+
+function persistRalphState(state: RalphPersistedState): void {
+  try {
+    fs.writeFileSync(RALPH_STATE_FILE, JSON.stringify(state, null, 2), 'utf8');
+  } catch (err) {
+    logger.warn({ err }, 'Ralph: failed to persist loop state');
+  }
+}
+
+function clearRalphState(): void {
+  try { fs.unlinkSync(RALPH_STATE_FILE); } catch { /* no state file */ }
+}
+
+/** Returns the state of a crashed run, or null if the last run ended cleanly. */
+export function getInterruptedRalph(): RalphPersistedState | null {
+  try {
+    if (!fs.existsSync(RALPH_STATE_FILE)) return null;
+    const state = JSON.parse(fs.readFileSync(RALPH_STATE_FILE, 'utf8')) as RalphPersistedState;
+    if (!state.goal || !state.planContent) return null;
+    return state;
+  } catch (err) {
+    logger.warn({ err }, 'Ralph: could not read persisted state');
+    return null;
+  }
+}
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -142,6 +188,7 @@ function recordCall(): void {
 export async function startRalph(
   config: RalphConfig,
   onUpdate: (status: RalphStatus) => void,
+  resume?: RalphPersistedState,
 ): Promise<void> {
   if (status.running) {
     logger.warn('Ralph is already running — ignoring duplicate startRalph call');
@@ -199,43 +246,52 @@ export async function startRalph(
   onUpdate({ ...status });
 
   try {
-    // ── Step 1: Decompose goal into fix_plan.md ─────────────────────────────
-    const decomposePrompt =
-      `You are a planning assistant. Decompose the following goal into a concise ` +
-      `numbered task checklist using GitHub-style Markdown checkboxes.\n\n` +
-      `Rules:\n` +
-      `- Each task must start with exactly "- [ ] " (dash space bracket space bracket space)\n` +
-      `- Tasks should be concrete, actionable, and independently executable\n` +
-      `- Aim for 3-10 tasks; merge trivial steps\n` +
-      `- Output ONLY the checklist — no preamble, no explanation\n\n` +
-      `Goal:\n${config.goal}`;
+    let planContent: string;
+    if (resume) {
+      // ── Resume: reuse the crashed run's plan ([x] marks preserved) ─────────
+      planContent = resume.planContent;
+      fs.writeFileSync(planFile, planContent, 'utf8');
+      status.lastOutput = `Resuming crashed run (was at iteration ${resume.iteration})`;
+      logger.info({ goal: config.goal, iteration: resume.iteration }, 'Ralph resuming from persisted state');
+    } else {
+      // ── Step 1: Decompose goal into fix_plan.md ───────────────────────────
+      const decomposePrompt =
+        `You are a planning assistant. Decompose the following goal into a concise ` +
+        `numbered task checklist using GitHub-style Markdown checkboxes.\n\n` +
+        `Rules:\n` +
+        `- Each task must start with exactly "- [ ] " (dash space bracket space bracket space)\n` +
+        `- Tasks should be concrete, actionable, and independently executable\n` +
+        `- Aim for 3-10 tasks; merge trivial steps\n` +
+        `- Output ONLY the checklist — no preamble, no explanation\n\n` +
+        `Goal:\n${config.goal}`;
 
-    recordCall();
-    const decomposeResult = await runAgent(
-      decomposePrompt,
-      undefined,
-      () => {},
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      sandbox?.hostCwd,
-    );
+      recordCall();
+      const decomposeResult = await runAgent(
+        decomposePrompt,
+        undefined,
+        () => {},
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        sandbox?.hostCwd,
+      );
 
-    const planContent = decomposeResult.text ?? '';
-    fs.writeFileSync(planFile, `# Fix Plan\n\n${planContent}\n`, 'utf8');
+      planContent = decomposeResult.text ?? '';
+      fs.writeFileSync(planFile, `# Fix Plan\n\n${planContent}\n`, 'utf8');
+    }
 
     status.totalTasks = countTotal(planContent);
-    status.completedTasks = 0;
-    status.lastOutput = `Plan ready: ${status.totalTasks} task(s)`;
+    status.completedTasks = countCompleted(planContent);
+    if (!resume) status.lastOutput = `Plan ready: ${status.totalTasks} task(s)`;
     onUpdate({ ...status });
 
     // ── Step 2: Iterate through tasks ────────────────────────────────────────
     let noProgressStreak = 0;
     const CIRCUIT_BREAKER_LIMIT = 5;  // raised from 3: complex tasks need more iterations
     let retryWithDifferentApproach = false;
-    let sessionId: string | undefined;
+    let sessionId: string | undefined = resume?.sessionId;
 
     for (let iter = 1; iter <= config.maxIterations; iter++) {
       if (stopRequested) {
@@ -332,6 +388,17 @@ export async function startRalph(
 
       onUpdate({ ...status });
 
+      // Snapshot for crash recovery — plan state + session after every iteration
+      persistRalphState({
+        goal: config.goal,
+        config,
+        planContent: fs.readFileSync(planFile, 'utf8'),
+        sessionId,
+        iteration: iter,
+        startedAt: status.startedAt ?? Date.now(),
+        updatedAt: Date.now(),
+      });
+
       // Circuit breaker
       if (noProgressStreak >= CIRCUIT_BREAKER_LIMIT) {
         // Skip this task and try the next one instead of stopping entirely
@@ -357,6 +424,9 @@ export async function startRalph(
     status.lastOutput = `Error: ${err instanceof Error ? err.message : String(err)}`;
   } finally {
     status.running = false;
+    // Orderly exit (complete / stopped / circuit-broken / caught error) —
+    // remove the crash-recovery snapshot. Only a hard crash leaves it behind.
+    clearRalphState();
     onUpdate({ ...status });
     logger.info({ completedTasks: status.completedTasks, totalTasks: status.totalTasks }, 'Ralph stopped');
 
@@ -414,6 +484,18 @@ export function registerRalphCommand(
     if (args.toLowerCase() === 'status') {
       const s = getRalphStatus();
       if (!s.running && s.startedAt === null) {
+        const interrupted = getInterruptedRalph();
+        if (interrupted) {
+          const done = countCompleted(interrupted.planContent);
+          const total = countTotal(interrupted.planContent);
+          await ctx.reply(
+            `Ralph is not running, but a previous run was interrupted:\n` +
+            `Goal: ${interrupted.goal.slice(0, 120)}\n` +
+            `Progress: ${done}/${total} tasks (iteration ${interrupted.iteration})\n\n` +
+            `Use /ralph resume to continue, or /ralph <goal> to start fresh.`,
+          );
+          return;
+        }
         await ctx.reply('Ralph is not running. Use /ralph <goal> to start.');
         return;
       }
@@ -441,11 +523,12 @@ export function registerRalphCommand(
       return;
     }
 
-    // /ralph <goal>
+    // /ralph <goal> | /ralph resume
     if (!args) {
       await ctx.reply(
         'Usage:\n' +
         '/ralph <goal>   — Start autonomous loop\n' +
+        '/ralph resume   — Resume an interrupted run\n' +
         '/ralph status   — Show status\n' +
         '/ralph stop     — Stop loop',
       );
@@ -457,8 +540,43 @@ export function registerRalphCommand(
       return;
     }
 
-    const goal = args;
     const chatIdStr = ctx.chat!.id.toString();
+    const onUpdate = async (s: RalphStatus): Promise<void> => {
+      const summary =
+        `<b>Ralph</b> [${s.iteration}/${s.maxIterations}] ` +
+        `${s.completedTasks}/${s.totalTasks} tasks\n` +
+        `${s.lastOutput}`;
+      try {
+        await ctx.api.sendMessage(parseInt(chatIdStr), summary, { parse_mode: 'HTML' });
+      } catch (err) {
+        logger.warn({ err }, 'Ralph: failed to send Telegram update');
+      }
+    };
+    const onLoopError = (err: unknown): void => {
+      logger.error({ err }, 'Ralph: unhandled loop error');
+      ctx.api
+        .sendMessage(parseInt(chatIdStr), `Ralph loop error: ${err instanceof Error ? err.message : String(err)}`)
+        .catch(() => {});
+    };
+
+    // /ralph resume — continue an interrupted run from its persisted plan
+    if (args.toLowerCase() === 'resume') {
+      const interrupted = getInterruptedRalph();
+      if (!interrupted) {
+        await ctx.reply('No interrupted Ralph run found. Use /ralph <goal> to start.');
+        return;
+      }
+      const done = countCompleted(interrupted.planContent);
+      const total = countTotal(interrupted.planContent);
+      await ctx.reply(
+        `Resuming Ralph (${done}/${total} tasks done):\n<b>${interrupted.goal.slice(0, 200)}</b>`,
+        { parse_mode: 'HTML' },
+      );
+      startRalph(interrupted.config, (s) => void onUpdate(s), interrupted).catch(onLoopError);
+      return;
+    }
+
+    const goal = args;
     await ctx.reply(`Starting Ralph for goal:\n<b>${goal}</b>`, { parse_mode: 'HTML' });
 
     const config: RalphConfig = {
@@ -469,21 +587,6 @@ export function registerRalphCommand(
     };
 
     // Run loop in background — send Telegram updates after each iteration
-    startRalph(config, async (s) => {
-      const summary =
-        `<b>Ralph</b> [${s.iteration}/${s.maxIterations}] ` +
-        `${s.completedTasks}/${s.totalTasks} tasks\n` +
-        `${s.lastOutput}`;
-      try {
-        await ctx.api.sendMessage(parseInt(chatIdStr), summary, { parse_mode: 'HTML' });
-      } catch (err) {
-        logger.warn({ err }, 'Ralph: failed to send Telegram update');
-      }
-    }).catch((err) => {
-      logger.error({ err }, 'Ralph: unhandled loop error');
-      ctx.api
-        .sendMessage(parseInt(chatIdStr), `Ralph loop error: ${err instanceof Error ? err.message : String(err)}`)
-        .catch(() => {});
-    });
+    startRalph(config, (s) => void onUpdate(s)).catch(onLoopError);
   });
 }

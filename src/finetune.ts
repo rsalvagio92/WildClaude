@@ -24,6 +24,7 @@ import { getDb, decryptField } from './db.js';
 import { USER_DATA_DIR } from './paths.js';
 import { readEnvFile } from './env.js';
 import { logger } from './logger.js';
+import { MODELS } from './models.js';
 
 const FT_ENABLED = (process.env.FINETUNE_ENABLED ?? 'false').toLowerCase() === 'true';
 const FT_DIR = path.join(USER_DATA_DIR, 'finetune');
@@ -143,7 +144,7 @@ export interface FineTuneJob {
  * is false (the default), so this is safe to call from CLI / dashboard at any
  * time — it won't surprise-burn money.
  */
-export async function submitFineTune(jsonlPath: string, baseModel = 'claude-haiku-4-5'): Promise<FineTuneJob> {
+export async function submitFineTune(jsonlPath: string, baseModel: string = MODELS.haiku): Promise<FineTuneJob> {
   if (!fs.existsSync(jsonlPath)) throw new Error(`JSONL not found: ${jsonlPath}`);
   const job: FineTuneJob = {
     id: 'ft-' + Date.now().toString(36),

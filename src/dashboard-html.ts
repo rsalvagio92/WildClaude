@@ -1369,7 +1369,7 @@ textarea.form-input { resize: vertical; min-height: 70px; }
       <div class="form-group" style="margin:0">
         <label class="form-label">Model</label>
         <select class="form-input" id="agent-editor-model">
-          <option value="claude-opus-4-6">Opus</option>
+          <option value="claude-opus-4-8">Opus</option>
           <option value="claude-sonnet-4-6">Sonnet</option>
           <option value="claude-haiku-4-5">Haiku</option>
         </select>
@@ -2154,7 +2154,7 @@ async function loadAgents() {
           '<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">' +
             '<span class="badge ' + mBadge + '">' + escHtml(modelShort) + '</span>' +
             '<select class="model-select" onchange="updateAgentModel(\\'' + escHtml(a.id) + '\\', this.value)" title="Change model">' +
-              '<option value="claude-opus-4-6"' + (modelShort.includes('opus') ? ' selected' : '') + '>Opus</option>' +
+              '<option value="claude-opus-4-8"' + (modelShort.includes('opus') ? ' selected' : '') + '>Opus</option>' +
               '<option value="claude-sonnet-4-6"' + (modelShort.includes('sonnet') ? ' selected' : '') + '>Sonnet</option>' +
               '<option value="claude-haiku-4-5"' + (modelShort.includes('haiku') ? ' selected' : '') + '>Haiku</option>' +
             '</select>' +

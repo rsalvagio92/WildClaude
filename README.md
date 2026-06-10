@@ -35,15 +35,19 @@ When Anthropic restricted third-party access to Claude, tools like OpenClaw that
 - **Life management** — `/morning` briefings, `/evening` reviews, `/goals`, `/focus`, `/journal`, `/review`
 
 ### Integrations
-- **31 MCP server integrations** (Notion, GitHub, Slack, Vercel, Neon, Stripe, Supabase...)
+- **36 MCP server integrations** (Notion, GitHub, Slack, Vercel, Neon, Stripe, Supabase...)
 - **External dashboards** — connect Vercel, Neon, GitHub, Stripe, Cloudflare, Sentry with purpose-built UIs
 - **Import from OpenClaw** — memories, API keys, MCP configs, cron jobs, agent metadata
 - **Voice** — Groq Whisper (STT) + ElevenLabs (TTS)
 - **WhatsApp & Slack bridges**
+  > ⚠️ The WhatsApp bridge uses `whatsapp-web.js`, an **unofficial** browser-automation client.
+  > It violates WhatsApp's Terms of Service and carries a real risk of your WhatsApp account
+  > being banned. It is disabled by default — enable it only if you accept that risk.
+  > For production use, consider the official WhatsApp Cloud API or Twilio instead.
 
 ### Infrastructure
 - **Encrypted secrets manager** — AES-256-GCM, manage from dashboard or Telegram
-- **Dark-mode dashboard** with 11 modules and real-time SSE updates
+- **Dark-mode dashboard** with 17 modules and real-time SSE updates
 - **Security** — PIN lock, idle auto-lock, emergency kill phrase, full audit log
 - **Lightweight** — runs anywhere from a PC to a Raspberry Pi
 - **Data separation** — code in repo, all user data in `~/.wild-claude-pi/`
@@ -114,7 +118,7 @@ Telegram / Dashboard / CLI
 | Mission Control | Goals, projects, task management |
 | Agent Hub | 17 agents grouped by lane, edit system prompts |
 | Workflow Engine | Scheduled tasks, cron management |
-| Skills & MCP | Manage skills + install/remove 31 MCP servers |
+| Skills & MCP | Manage skills + install/remove 36 MCP servers |
 | System Vitals | CPU, RAM, disk, temperature, network, costs |
 | Daily Journal | Auto-generated entries from reviews |
 | External Dashboards | Vercel, GitHub, Neon, Supabase, Stripe, Cloudflare, Sentry |

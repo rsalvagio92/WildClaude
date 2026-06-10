@@ -13,6 +13,7 @@ import Anthropic from '@anthropic-ai/sdk';
 
 import { readEnvFile } from './env.js';
 import { logger } from './logger.js';
+import { TIER_MODELS } from './models.js';
 
 export type ComplexityTier = 'SIMPLE' | 'MEDIUM' | 'COMPLEX';
 
@@ -23,11 +24,7 @@ export interface RoutingResult {
   latencyMs: number;
 }
 
-const TIER_TO_MODEL: Record<ComplexityTier, string> = {
-  SIMPLE: 'claude-haiku-4-5',
-  MEDIUM: 'claude-sonnet-4-6',
-  COMPLEX: 'claude-opus-4-6',
-};
+const TIER_TO_MODEL: Record<ComplexityTier, string> = TIER_MODELS;
 
 const CLASSIFICATION_PROMPT = `Classify this user message into exactly one complexity tier:
 

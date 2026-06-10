@@ -31,7 +31,7 @@ WildClaude is a lightweight personal AI operating system. It runs as a Node.js s
 │  ┌──────▼─────────────────▼───────────────────▼───────────┐ │
 │  │            Claude Agent SDK                             │ │
 │  │  Spawns `claude` CLI → Uses subscription auth           │ │
-│  │  Models: Opus 4.6 │ Sonnet 4.6 │ Haiku 4.5            │ │
+│  │  Models: Opus 4.8 │ Sonnet 4.6 │ Haiku 4.5            │ │
 │  └────────────────────────────────────────────────────────┘ │
 │                                                              │
 │  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌───────────────┐ │
@@ -54,7 +54,7 @@ WildClaude is a lightweight personal AI operating system. It runs as a Node.js s
 │  ┌─────────── MCP TOOLS ────────────────────────────────┐ │
 │  │ Browser (Playwright)   │ Vision (Claude)              │ │
 │  │ Home Assistant         │ Gmail / Calendar             │ │
-│  │ Computer Use (gated)   │ 31-server MCP registry        │ │
+│  │ Computer Use (gated)   │ 36-server MCP registry        │ │
 │  └────────────────────────────────────────────────────────┘ │
 └─────────────────────────────────────────────────────────────┘
            │
@@ -136,7 +136,7 @@ Path helpers in `src/paths.ts`:
 
 | File | Purpose |
 |------|---------|
-| `mcp-manager.ts` | 31-server registry, install/remove MCP servers, write `.mcp.json`, auto-register secrets |
+| `mcp-manager.ts` | 36-server registry, install/remove MCP servers, write `.mcp.json`, auto-register secrets |
 
 ### Agents (src/)
 
@@ -456,7 +456,7 @@ MCPs and plugins can register dynamic secrets via `registerSecret(def)`. These a
 
 ## MCP Manager
 
-`mcp-manager.ts` maintains a registry of 31 known MCP servers across 8 categories. When a server is installed:
+`mcp-manager.ts` maintains a registry of 36 known MCP servers across 8 categories. When a server is installed:
 
 1. Required secrets are registered with `registerSecret()`
 2. Env vars are built by substituting secret values into templates

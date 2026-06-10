@@ -7,6 +7,7 @@ import yaml from 'js-yaml';
 import { CLAUDECLAW_CONFIG, PROJECT_ROOT, STORE_DIR } from './config.js';
 import { listAgentIds, loadAgentConfig, resolveAgentDir } from './agent-config.js';
 import { logger } from './logger.js';
+import { MODELS } from './models.js';
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -204,7 +205,7 @@ export async function createAgent(opts: CreateAgentOpts): Promise<CreateAgentRes
     name,
     description,
     telegram_bot_token_env: envKey,
-    model: model || 'claude-sonnet-4-6',
+    model: model || MODELS.sonnet,
   };
   fs.writeFileSync(
     path.join(agentDir, 'agent.yaml'),

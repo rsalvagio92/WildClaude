@@ -1,7 +1,7 @@
-import { describe, it, expect, vi, afterEach } from 'vitest';
+import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import fs from 'fs';
 import path from 'path';
-import { readEnvFile } from './env.js';
+import { readEnvFile, invalidateEnvCache } from './env.js';
 
 const TMP_DIR = '/tmp/claudeclaw-env-test';
 const TMP_ENV = path.join(TMP_DIR, '.env');
@@ -20,9 +20,16 @@ function cleanup(): void {
 }
 
 describe('readEnvFile', () => {
+  beforeEach(() => {
+    // readEnvFile caches the parsed .env for 60s — reset between tests so
+    // each test reads its own fixture instead of the previous test's.
+    invalidateEnvCache();
+  });
+
   afterEach(() => {
     vi.restoreAllMocks();
     cleanup();
+    invalidateEnvCache();
   });
 
   function mockCwd(): void {

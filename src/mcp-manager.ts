@@ -39,6 +39,14 @@ interface McpServerDef {
   }>;
 }
 
+/**
+ * Build command/args for a built-in (Hermes) MCP server that ships in this
+ * repo and runs from the compiled `dist/` output. Requires `npm run build`.
+ */
+function hermesLocal(relDistPath: string): { command: string; args: string[] } {
+  return { command: 'node', args: [path.join(PROJECT_ROOT, 'dist', ...relDistPath.split('/'))] };
+}
+
 const MCP_REGISTRY: McpServerDef[] = [
   // ── Productivity & Docs ────────────────────────────────────────────
   {
@@ -60,21 +68,39 @@ const MCP_REGISTRY: McpServerDef[] = [
   },
   {
     id: 'google-calendar',
-    name: 'Google Calendar',
-    description: 'Read/create calendar events, check availability',
-    command: 'npx',
-    args: ['-y', '@anthropics/mcp-server-google-calendar'],
-    env: { GOOGLE_CALENDAR_CREDENTIALS: '${GOOGLE_CALENDAR_CREDENTIALS}' },
-    secrets: [{ key: 'GOOGLE_CALENDAR_CREDENTIALS', name: 'Google Calendar Credentials', description: 'OAuth credentials JSON for Google Calendar API', obtainUrl: 'https://console.cloud.google.com/apis/credentials' }],
+    name: 'Google Calendar (Hermes)',
+    description: 'List/create/update/delete events, find free slots. Built-in — auto-refreshes OAuth tokens.',
+    ...hermesLocal('integrations/google-calendar.js'),
+    env: {
+      GCAL_REFRESH_TOKEN: '${GCAL_REFRESH_TOKEN}',
+      GCAL_ACCESS_TOKEN: '${GCAL_ACCESS_TOKEN}',
+      GOOGLE_OAUTH_CLIENT_ID: '${GOOGLE_OAUTH_CLIENT_ID}',
+      GOOGLE_OAUTH_CLIENT_SECRET: '${GOOGLE_OAUTH_CLIENT_SECRET}',
+    },
+    secrets: [
+      { key: 'GCAL_REFRESH_TOKEN', name: 'Calendar Refresh Token', description: 'Long-lived OAuth refresh token (preferred — auto-refreshes access)', obtainUrl: 'https://developers.google.com/oauthplayground' },
+      { key: 'GOOGLE_OAUTH_CLIENT_ID', name: 'Google OAuth Client ID', description: 'OAuth client ID from Google Cloud Console (needed for refresh)', obtainUrl: 'https://console.cloud.google.com/apis/credentials' },
+      { key: 'GOOGLE_OAUTH_CLIENT_SECRET', name: 'Google OAuth Client Secret', description: 'OAuth client secret (pairs with the client ID)' },
+      { key: 'GCAL_ACCESS_TOKEN', name: 'Calendar Access Token', description: 'Short-lived token — fallback if refresh isn’t configured' },
+    ],
   },
   {
     id: 'gmail',
-    name: 'Gmail',
-    description: 'Read, send, and search emails via Gmail API',
-    command: 'npx',
-    args: ['-y', '@anthropics/mcp-server-gmail'],
-    env: { GMAIL_CREDENTIALS: '${GMAIL_CREDENTIALS}' },
-    secrets: [{ key: 'GMAIL_CREDENTIALS', name: 'Gmail Credentials', description: 'OAuth credentials JSON for Gmail API', obtainUrl: 'https://console.cloud.google.com/apis/credentials' }],
+    name: 'Gmail (Hermes)',
+    description: 'Read, send, search emails via Gmail API. Built-in — auto-refreshes OAuth tokens.',
+    ...hermesLocal('integrations/gmail.js'),
+    env: {
+      GMAIL_REFRESH_TOKEN: '${GMAIL_REFRESH_TOKEN}',
+      GMAIL_ACCESS_TOKEN: '${GMAIL_ACCESS_TOKEN}',
+      GOOGLE_OAUTH_CLIENT_ID: '${GOOGLE_OAUTH_CLIENT_ID}',
+      GOOGLE_OAUTH_CLIENT_SECRET: '${GOOGLE_OAUTH_CLIENT_SECRET}',
+    },
+    secrets: [
+      { key: 'GMAIL_REFRESH_TOKEN', name: 'Gmail Refresh Token', description: 'Long-lived OAuth refresh token (preferred — auto-refreshes access)', obtainUrl: 'https://developers.google.com/oauthplayground' },
+      { key: 'GOOGLE_OAUTH_CLIENT_ID', name: 'Google OAuth Client ID', description: 'OAuth client ID from Google Cloud Console (needed for refresh)', obtainUrl: 'https://console.cloud.google.com/apis/credentials' },
+      { key: 'GOOGLE_OAUTH_CLIENT_SECRET', name: 'Google OAuth Client Secret', description: 'OAuth client secret (pairs with the client ID)' },
+      { key: 'GMAIL_ACCESS_TOKEN', name: 'Gmail Access Token', description: 'Short-lived token — fallback if refresh isn’t configured' },
+    ],
   },
   {
     id: 'todoist',
@@ -338,6 +364,55 @@ const MCP_REGISTRY: McpServerDef[] = [
     args: ['-y', '@modelcontextprotocol/server-sequential-thinking'],
     secrets: [],
   },
+
+  // ── Hermes (built-in) ──────────────────────────────────────────────
+  // Shipped in this repo, run from compiled dist/ (run `npm run build` first).
+  // No npx download — `/mcp_install browser` works out of the box.
+  {
+    id: 'browser',
+    name: 'Browser (Hermes)',
+    description: 'Playwright browser automation — navigate, read text, screenshot, click. Host-allowlisted via config.json.',
+    ...hermesLocal('tools/browser-mcp.js'),
+    secrets: [],
+  },
+  {
+    id: 'vision',
+    name: 'Vision (Hermes)',
+    description: 'Claude vision — describe images, extract text (OCR), answer questions about an image.',
+    ...hermesLocal('tools/vision-mcp.js'),
+    env: { ANTHROPIC_API_KEY: '${ANTHROPIC_API_KEY}' },
+    secrets: [{ key: 'ANTHROPIC_API_KEY', name: 'Anthropic API Key', description: 'Required for the vision model (sk-ant-...)', obtainUrl: 'https://console.anthropic.com/settings/keys', pattern: /^sk-ant-/ }],
+  },
+  {
+    id: 'web-search',
+    name: 'Web Search (Hermes)',
+    description: 'Lightweight web + news search via Brave or Tavily — far cheaper than the browser tool for "what is X".',
+    ...hermesLocal('integrations/web-search.js'),
+    env: { BRAVE_API_KEY: '${BRAVE_API_KEY}', TAVILY_API_KEY: '${TAVILY_API_KEY}' },
+    secrets: [
+      { key: 'BRAVE_API_KEY', name: 'Brave Search API Key', description: 'Preferred provider — key from brave.com/search/api', obtainUrl: 'https://brave.com/search/api/' },
+      { key: 'TAVILY_API_KEY', name: 'Tavily API Key', description: 'Alternative provider — used if no Brave key is set', obtainUrl: 'https://app.tavily.com/home' },
+    ],
+  },
+  {
+    id: 'computer-use',
+    name: 'Computer Use (Hermes)',
+    description: 'Screenshot / click / type / key / move. Installing enables it; every action is audited.',
+    ...hermesLocal('tools/computer-use-mcp.js'),
+    env: { COMPUTER_USE_ENABLED: 'true' },
+    secrets: [],
+  },
+  {
+    id: 'home-assistant',
+    name: 'Home Assistant (Hermes)',
+    description: 'Home Assistant REST API — list entities, get state, call services, turn devices on/off.',
+    ...hermesLocal('integrations/home-assistant.js'),
+    env: { HOME_ASSISTANT_URL: '${HOME_ASSISTANT_URL}', HOME_ASSISTANT_TOKEN: '${HOME_ASSISTANT_TOKEN}' },
+    secrets: [
+      { key: 'HOME_ASSISTANT_URL', name: 'Home Assistant URL', description: 'Base URL of your HA instance (e.g. http://homeassistant.local:8123)' },
+      { key: 'HOME_ASSISTANT_TOKEN', name: 'Home Assistant Token', description: 'Long-lived access token from your HA profile', obtainUrl: 'https://www.home-assistant.io/docs/authentication/#your-account-profile' },
+    ],
+  },
 ];
 
 // ── .mcp.json Management ─────────────────────────────────────────────
@@ -402,7 +477,9 @@ export function installMcp(id: string): { installed: boolean; name: string; miss
           env[envKey] = template.replace(`\${${secretKey}}`, secretValue);
         } else {
           missingSecrets.push(secretKey);
-          env[envKey] = template; // Keep template, will be resolved later
+          // Omit the key entirely rather than writing a literal '${KEY}' — an
+          // unset var reads as "not configured", which is what servers expect.
+          // Re-run /mcp_install after setting the secret to inject the value.
         }
       } else {
         env[envKey] = template;

@@ -29,6 +29,7 @@ import { EventEmitter } from 'events';
 import { getDb } from './db.js';
 import { logger } from './logger.js';
 import { USER_DATA_DIR } from './paths.js';
+import { MODELS } from './models.js';
 import {
   SKILL_SYNTHESIS_ENABLED,
   SKILL_SYNTHESIS_MIN_REPETITIONS,
@@ -285,13 +286,23 @@ interface ParsedProposal {
 }
 
 function parseProposal(raw: string): ParsedProposal | null {
-  // Find frontmatter
-  const fmMatch = raw.match(/^---\s*\n([\s\S]*?)\n---/);
-  if (!fmMatch) return null;
+  // Models sometimes wrap the file in a markdown fence — unwrap it first.
+  const fenced = raw.match(/```(?:markdown|md)?\s*\n([\s\S]*?)```/);
+  const text = (fenced?.[1] ?? raw).trim();
+
+  const fmMatch = text.match(/^---\s*\n([\s\S]*?)\n---/);
+  if (!fmMatch) {
+    logger.warn({ raw: raw.slice(0, 300) }, 'parseProposal: no frontmatter in model output');
+    return null;
+  }
   const fm = fmMatch[1]!;
-  const nameMatch = fm.match(/^name:\s*([\w-]+)\s*$/m);
-  if (!nameMatch) return null;
-  return { name: slugify(nameMatch[1]!), content: raw.trim() };
+  // Tolerate quoted values: name: "my-skill" / name: 'my-skill' / name: my-skill
+  const nameMatch = fm.match(/^name:\s*["']?([\w-]+)["']?\s*$/m);
+  if (!nameMatch) {
+    logger.warn({ frontmatter: fm.slice(0, 200) }, 'parseProposal: frontmatter has no usable name');
+    return null;
+  }
+  return { name: slugify(nameMatch[1]!), content: text };
 }
 
 async function draftSkill(signature: string, count: number): Promise<ParsedProposal | null> {
@@ -301,7 +312,7 @@ async function draftSkill(signature: string, count: number): Promise<ParsedPropo
       undefined,
       () => {},
       undefined,
-      'claude-haiku-4-5',
+      MODELS.haiku,
     );
     if (!result.text) return null;
     return parseProposal(result.text);
@@ -398,10 +409,14 @@ function escapeHtml(s: string): string {
 
 /**
  * Register /skill_accept and /skill_reject commands on the bot.
+ * `onAccepted` fires after a successful promotion so the caller can refresh
+ * the command menu immediately (hot-reload watcher also catches it, but this
+ * works even when chokidar isn't installed).
  */
 export function registerSkillSynthesisCommands(
   bot: import('grammy').Bot,
   isAuthorised: (chatId: number) => boolean,
+  onAccepted?: () => void,
 ): void {
   bot.command('skill_accept', async (ctx) => {
     if (!isAuthorised(ctx.chat!.id)) return;
@@ -412,6 +427,7 @@ export function registerSkillSynthesisCommands(
     }
     const r = promoteProposal(hash);
     if (r.ok) {
+      try { onAccepted?.(); } catch (err) { logger.warn({ err }, 'skill_accept: onAccepted callback failed'); }
       await ctx.reply(`Skill accepted${r.reason ? ` (${r.reason})` : ''}.\nFile: ${r.skillPath}`);
     } else {
       await ctx.reply(`Could not accept: ${r.reason ?? 'unknown'}`);

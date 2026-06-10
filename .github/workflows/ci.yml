@@ -1,0 +1,45 @@
+name: CI
+
+on:
+  push:
+    branches: [master, hermes]
+  pull_request:
+    branches: [master]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Node 24 is excluded on purpose: better-sqlite3 prebuilds lag new
+        # Node majors. 20 = engines minimum, 22 = current LTS.
+        node-version: [20, 22]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Use Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+        env:
+          # Skip Chromium download — browser MCP is optional and not under test
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
+          PUPPETEER_SKIP_DOWNLOAD: '1'
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Build
+        run: npm run build
+
+      - name: Test
+        run: npm test
+        env:
+          # Dummy key for tests that initialize the encrypted SQLite store —
+          # not a real secret (64 hex zeros).
+          DB_ENCRYPTION_KEY: '0000000000000000000000000000000000000000000000000000000000000000'

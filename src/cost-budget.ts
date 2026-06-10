@@ -36,7 +36,11 @@ function resetIfNewMonth(): void {
 
 export interface BudgetStatus {
   monthKey: string;
+  /** Real API spend this month (auth_mode='api' rows only). */
   spentUsd: number;
+  /** What this month's usage WOULD cost at API rates, across all modes.
+   *  For subscription users this is informational, not billed. */
+  equivalentUsd: number;
   budgetUsd: number;
   /** spentUsd / budgetUsd, capped at unbounded if no budget configured. */
   ratio: number;
@@ -48,16 +52,23 @@ export interface BudgetStatus {
 export function getBudgetStatus(): BudgetStatus {
   const month = currentMonthKey();
   const startSec = Math.floor(new Date(`${month}-01T00:00:00`).getTime() / 1000);
+  // Only auth_mode='api' rows represent real dollars. Subscription/CLI turns
+  // report a cost figure too, but it's covered by the plan — counting it
+  // would fire fake budget alerts and downgrade the router for no reason.
   const row = getDb().prepare(
-    `SELECT COALESCE(SUM(cost_usd), 0) AS cost, COUNT(*) AS turns
-       FROM token_usage WHERE created_at >= ?`,
-  ).get(startSec) as { cost: number; turns: number };
+    `SELECT
+       COALESCE(SUM(CASE WHEN auth_mode = 'api' THEN cost_usd ELSE 0 END), 0) AS apiCost,
+       COALESCE(SUM(cost_usd), 0) AS allCost,
+       COUNT(*) AS turns
+     FROM token_usage WHERE created_at >= ?`,
+  ).get(startSec) as { apiCost: number; allCost: number; turns: number };
 
   return {
     monthKey: month,
-    spentUsd: row.cost,
+    spentUsd: row.apiCost,
+    equivalentUsd: row.allCost,
     budgetUsd: BUDGET_USD,
-    ratio: BUDGET_USD > 0 ? row.cost / BUDGET_USD : 0,
+    ratio: BUDGET_USD > 0 ? row.apiCost / BUDGET_USD : 0,
     turns: row.turns,
     enabled: BUDGET_USD > 0,
   };
@@ -109,12 +120,18 @@ export function registerBudgetCommand(
     const lines: string[] = [`<b>Budget</b> — ${s.monthKey}`];
     if (!s.enabled) {
       lines.push('Nessun budget mensile impostato. Imposta <code>MONTHLY_BUDGET_USD=10</code> in .env per abilitare.');
-      lines.push(`Spesa corrente: $${s.spentUsd.toFixed(4)} su ${s.turns} turni.`);
+      lines.push(`Spesa API reale: $${s.spentUsd.toFixed(4)} su ${s.turns} turni.`);
+      if (s.equivalentUsd > s.spentUsd) {
+        lines.push(`Uso subscription (equivalente API, non fatturato): $${(s.equivalentUsd - s.spentUsd).toFixed(4)}`);
+      }
     } else {
       const pct = (s.ratio * 100).toFixed(0);
       const bar = renderBar(s.ratio);
-      lines.push(`Spesa: $${s.spentUsd.toFixed(4)} / $${s.budgetUsd.toFixed(2)} (${pct}%)`);
+      lines.push(`Spesa API: $${s.spentUsd.toFixed(4)} / $${s.budgetUsd.toFixed(2)} (${pct}%)`);
       lines.push(`Turni: ${s.turns}`);
+      if (s.equivalentUsd > s.spentUsd) {
+        lines.push(`Uso subscription (non fatturato): $${(s.equivalentUsd - s.spentUsd).toFixed(4)}`);
+      }
       lines.push(bar);
       if (s.ratio >= 1.0) lines.push('⚠️ Cap raggiunto. Router fa downgrade automatico a Haiku.');
       else if (s.ratio >= 0.8) lines.push('🟡 Avvicinandoti al cap.');

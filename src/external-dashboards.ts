@@ -239,6 +239,19 @@ async function fetchService(serviceId: string, endpointId: string): Promise<{ da
     }
 
     const url = service.baseUrl + endpoint.path;
+    // SSRF guard: user-defined services come from an editable config file —
+    // never send a stored API token to plain http or an internal host.
+    let parsed: URL;
+    try { parsed = new URL(url); } catch { return { error: `Invalid service URL: ${url}` }; }
+    const host = parsed.hostname.toLowerCase();
+    const isPrivate =
+      host === 'localhost' || host === '0.0.0.0' || host === '::1' ||
+      /^127\./.test(host) || /^10\./.test(host) || /^192\.168\./.test(host) ||
+      /^172\.(1[6-9]|2\d|3[01])\./.test(host) || /^169\.254\./.test(host) ||
+      host.endsWith('.local') || host.endsWith('.internal') || !host.includes('.');
+    if (parsed.protocol !== 'https:' || isPrivate) {
+      return { error: `Blocked: service URL must be https on a public host (got ${parsed.protocol}//${host})` };
+    }
     const response = await fetch(url, {
       method: endpoint.method || 'GET',
       headers,

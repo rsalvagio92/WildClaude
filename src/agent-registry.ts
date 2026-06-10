@@ -5,6 +5,7 @@ import yaml from 'js-yaml';
 import { PROJECT_ROOT } from './config.js';
 import { logger } from './logger.js';
 import { USER_DATA_DIR } from './paths.js';
+import { MODELS } from './models.js';
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -72,7 +73,7 @@ function applyOverlayMetadata(agents: RegisteredAgent[]): RegisteredAgent[] {
               id,
               name: overrides.name ?? id,
               description: overrides.description ?? '',
-              model: overrides.model ?? 'claude-sonnet-4-6',
+              model: overrides.model ?? MODELS.sonnet,
               lane: overrides.lane ?? lane,
             });
           }
@@ -107,7 +108,7 @@ function loadRegistry(): RegisteredAgent[] {
         id: a.id,
         name: a.name,
         description: (a.description ?? '').replace(/\s+/g, ' ').trim(),
-        model: a.model ?? 'claude-sonnet-4-6',
+        model: a.model ?? MODELS.sonnet,
         lane: a.lane ?? 'domain',
       }));
     } catch (err) {

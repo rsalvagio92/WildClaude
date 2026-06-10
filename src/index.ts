@@ -151,6 +151,13 @@ async function main(): Promise<void> {
   initDatabase();
   logger.info('Database ready');
 
+  // Replay messages that were buffered (but unprocessed) when the previous
+  // process died — they get injected as context on the next message.
+  {
+    const { messageQueue } = await import('./message-queue.js');
+    await messageQueue.restorePersistedBuffers();
+  }
+
   // Initialize security (PIN lock, kill phrase, destructive confirmation, audit)
   initSecurity({
     pinHash: SECURITY_PIN_HASH || undefined,
@@ -211,10 +218,11 @@ async function main(): Promise<void> {
         // Split long messages to respect Telegram's 4096 char limit.
         // The scheduler's splitMessage handles chunking, but the sender
         // callback is also called directly for status messages which may exceed the limit.
-        const { splitMessage } = await import('./bot.js');
+        const { splitMessage, sendMessageWithRetry } = await import('./bot.js');
         for (const chunk of splitMessage(text)) {
-          await bot?.api.sendMessage(ALLOWED_CHAT_ID, chunk, { parse_mode: 'HTML' }).catch((err) =>
-            logger.error({ err }, 'Scheduler failed to send message'),
+          if (!bot) continue;
+          await sendMessageWithRetry(bot.api, ALLOWED_CHAT_ID, chunk, { parse_mode: 'HTML' }).catch((err) =>
+            logger.error({ err }, 'Scheduler failed to send message after retries'),
           );
         }
       },
@@ -228,11 +236,32 @@ async function main(): Promise<void> {
   // Safe to call every startup — never creates duplicates.
   syncAutomations(AGENT_ID);
 
+  let shuttingDown = false;
   const shutdown = async () => {
+    if (shuttingDown) return;
+    shuttingDown = true;
     logger.info('Shutting down...');
     setTelegramConnected(false);
+    if (bot) await bot.stop().catch((err) => logger.warn({ err }, 'Bot stop failed'));
+
+    // Drain in-flight messages (bounded) so we don't orphan a running task.
+    try {
+      const { messageQueue } = await import('./message-queue.js');
+      if (messageQueue.activeChats > 0) {
+        logger.info({ activeChats: messageQueue.activeChats }, 'Waiting for in-flight messages to finish...');
+        const drained = await messageQueue.drain(30000);
+        if (!drained) logger.warn('Shutdown drain timed out — exiting with tasks in flight');
+      }
+    } catch (err) {
+      logger.warn({ err }, 'Queue drain failed during shutdown');
+    }
+
+    try {
+      const { stopHotReload } = await import('./hot-reload.js');
+      await stopHotReload();
+    } catch { /* hot-reload not active */ }
+
     releaseLock();
-    if (bot) await bot.stop();
     process.exit(0);
   };
   process.on('SIGINT', () => void shutdown());
@@ -270,8 +299,19 @@ async function main(): Promise<void> {
   });
 }
 
+// Unhandled rejections leave the bot in an unknown state — log and exit so
+// the supervisor (systemd / wildclaude CLI) restarts us clean instead of
+// limping along half-broken.
 process.on('unhandledRejection', (reason) => {
-  logger.error({ reason }, 'Unhandled promise rejection');
+  logger.fatal({ reason }, 'Unhandled promise rejection — exiting for clean restart');
+  releaseLock();
+  process.exit(1);
+});
+
+process.on('uncaughtException', (err) => {
+  logger.fatal({ err }, 'Uncaught exception — exiting for clean restart');
+  releaseLock();
+  process.exit(1);
 });
 
 main().catch((err: unknown) => {

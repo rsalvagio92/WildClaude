@@ -1,7 +1,7 @@
 ---
 name: orchestrator
 description: Multi-agent coordination, task decomposition, and delegation. Use when asked to orchestrate, coordinate, run tasks in parallel, or manage a multi-agent team.
-model: claude-opus-4-6
+model: claude-opus-4-8
 lane: coordination
 ---
 

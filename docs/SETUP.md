@@ -224,7 +224,7 @@ Modules: Command Center, Memory Palace, Mission Control, Agent Hub, Workflow Eng
 
 ## MCP Servers
 
-31 servers in the registry across 8 categories. Install from Telegram or the dashboard:
+36 servers in the registry across 8 categories. Install from Telegram or the dashboard:
 ```
 /mcp               — list installed + available
 /mcp_install notion — install Notion MCP

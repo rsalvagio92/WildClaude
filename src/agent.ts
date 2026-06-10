@@ -4,6 +4,7 @@ import { spawn, execSync } from 'child_process';
 import { PROJECT_ROOT, agentCwd } from './config.js';
 import { readEnvFile } from './env.js';
 import { logger } from './logger.js';
+import { normalizeModel } from './models.js';
 import { recordTurn, ToolUseRecord } from './skill-synthesis.js';
 
 // ── Direct CLI mode ──────────────────────────────────────────────────
@@ -89,8 +90,40 @@ async function runAgentDirect(
     // Close stdin immediately — message is passed via -p flag, not stdin
     proc.stdin.end();
 
+    // Settlement guard: abort, stderr-reject, close and error can all fire for
+    // the same process — only the first outcome wins, and the SIGKILL escalation
+    // timer must always be cleared.
+    let settled = false;
+    let killTimer: ReturnType<typeof setTimeout> | null = null;
+    const settleResolve = (value: AgentResult) => {
+      if (settled) return;
+      settled = true;
+      if (killTimer) clearTimeout(killTimer);
+      resolve(value);
+    };
+    const settleReject = (err: Error) => {
+      if (settled) return;
+      settled = true;
+      if (killTimer) clearTimeout(killTimer);
+      reject(err);
+    };
+    const killWithEscalation = (p: ReturnType<typeof spawn>) => {
+      try { p.kill('SIGTERM'); } catch { /* already dead */ }
+      // A hung CLI can ignore SIGTERM — force-kill after 5s so the chat
+      // queue never wedges on a zombie subprocess.
+      if (killTimer) clearTimeout(killTimer);
+      killTimer = setTimeout(() => {
+        try {
+          if (p.exitCode === null && !p.killed) {
+            logger.warn({ pid: p.pid }, 'Claude CLI ignored SIGTERM — sending SIGKILL');
+            p.kill('SIGKILL');
+          }
+        } catch { /* already dead */ }
+      }, 5000);
+    };
+
     if (abortController) {
-      abortController.signal.addEventListener('abort', () => proc.kill('SIGTERM'));
+      abortController.signal.addEventListener('abort', () => killWithEscalation(proc), { once: true });
     }
 
     // Parse NDJSON stream for events
@@ -168,13 +201,17 @@ async function runAgentDirect(
         logger.warn({ stderr: msg.slice(0, 500), mode: 'direct-cli' }, 'Claude CLI stderr');
       }
       if (msg.includes('Third-party') || msg.includes('LLM request rejected')) {
-        proc.kill('SIGTERM');
-        reject(new Error('Claude CLI rejected: ' + msg.slice(0, 200)));
+        killWithEscalation(proc);
+        settleReject(new Error('Claude CLI rejected: ' + msg.slice(0, 200)));
       }
     });
 
     proc.on('close', (code) => {
       clearInterval(typingInterval);
+
+      // Already rejected (stderr/abort) — don't spawn a retry for a process
+      // we killed ourselves.
+      if (settled) return;
 
       logger.info(
         { mode: 'direct-cli', hasResult: !!resultText, code, sessionId: newSessionId, cost: usage?.totalCostUsd },
@@ -202,7 +239,7 @@ async function runAgentDirect(
 
         // Connect abort controller to retry process
         if (abortController) {
-          abortController.signal.addEventListener('abort', () => retry.kill('SIGTERM'));
+          abortController.signal.addEventListener('abort', () => killWithEscalation(retry), { once: true });
         }
 
         let retryBuf = '';
@@ -244,13 +281,13 @@ async function runAgentDirect(
         });
         retry.on('close', (retryCode) => {
           logger.info({ mode: 'direct-cli-retry', hasResult: !!retryResult, code: retryCode }, 'Retry result');
-          resolve({ text: retryResult, newSessionId: retrySessionId, usage: retryUsage });
+          settleResolve({ text: retryResult, newSessionId: retrySessionId, usage: retryUsage });
         });
-        retry.on('error', () => resolve({ text: null, newSessionId, usage: null }));
+        retry.on('error', () => settleResolve({ text: null, newSessionId, usage: null }));
         return;
       }
 
-      resolve({
+      settleResolve({
         text: resultText,
         newSessionId,
         usage,
@@ -259,7 +296,7 @@ async function runAgentDirect(
 
     proc.on('error', (err) => {
       clearInterval(typingInterval);
-      reject(err);
+      settleReject(err);
     });
   });
 }
@@ -326,6 +363,17 @@ export interface AgentResult {
 }
 
 /**
+ * How the last runAgent() call authenticated. 'subscription' = Claude CLI /
+ * OAuth (no marginal dollar cost — usage counts against the plan).
+ * 'api' = ANTHROPIC_API_KEY (real per-token billing). Cost-budget alerts and
+ * the auto-downgrade throttle only apply to 'api' usage.
+ */
+let lastAuthMode: 'subscription' | 'api' = 'subscription';
+export function getAuthMode(): 'subscription' | 'api' {
+  return lastAuthMode;
+}
+
+/**
  * A minimal AsyncIterable that yields a single user message then closes.
  * This is the format the Claude Agent SDK expects for its `prompt` parameter.
  * The SDK drives the agentic loop internally (tool use, multi-step reasoning)
@@ -372,9 +420,15 @@ export async function runAgent(
   appendSystemPrompt?: string,
   cwdOverride?: string,
 ): Promise<AgentResult> {
+  // Auto-upgrade any legacy/alias model string to the current canonical ID.
+  // This is the single chokepoint every agent query flows through, so an old
+  // agent .md saying `claude-opus-4-8` runs on the latest Opus without edits.
+  model = normalizeModel(model);
+
   // Try direct CLI first (uses subscription, avoids third-party limits)
   // Falls back to SDK if CLI fails or ANTHROPIC_API_KEY is set (explicit API mode)
   const secrets = readEnvFile(['CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_API_KEY']);
+  lastAuthMode = (secrets.ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KEY) ? 'api' : 'subscription';
   if (!secrets.ANTHROPIC_API_KEY && !process.env.ANTHROPIC_API_KEY) {
     try {
       return await runAgentDirect(message, sessionId, onTyping, onProgress, model, abortController, onStreamText, appendSystemPrompt, cwdOverride);

@@ -8,6 +8,7 @@
 
 import { runAgent } from './agent.js';
 import { logger } from './logger.js';
+import { MODELS } from './models.js';
 
 export interface DebateOptions {
   agentA: string;
@@ -83,7 +84,7 @@ export async function runDebate(
       `"${opts.topic}"\n\n${transcript}\n\n` +
       `In 3 bullet points, summarize the strongest argument from each side and a synthesis. Be concise.`;
     try {
-      const r = await runAgent(sumPrompt, undefined, () => {}, undefined, 'claude-haiku-4-5');
+      const r = await runAgent(sumPrompt, undefined, () => {}, undefined, MODELS.haiku);
       summary = r.text ?? null;
     } catch (err) {
       logger.warn({ err }, 'debate: summary generation failed');

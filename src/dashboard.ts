@@ -63,6 +63,7 @@ import {
   isAgentRunning,
 } from './agent-create.js';
 import { processMessageFromDashboard } from './bot.js';
+import { MODELS } from './models.js';
 import {
   loadPersonalityConfig,
   generatePersonalityPrompt,
@@ -125,6 +126,12 @@ export function startDashboard(botApi?: Api<RawApi>): void {
   });
   app.get('/dashboard', (c) => {
     return c.html(getDashboardHtml());
+  });
+
+  // Liveness probe (no auth, no sensitive data) — for uptime monitors,
+  // load balancers and the wildclaude CLI status check.
+  app.get('/healthz', (c) => {
+    return c.json({ ok: true, uptimeSec: Math.round(process.uptime()) });
   });
 
   // Token auth middleware (applies to /api/* only)
@@ -650,7 +657,7 @@ export function startDashboard(botApi?: Api<RawApi>): void {
           id,
           name: config.name,
           description: config.description,
-          model: config.model ?? 'claude-opus-4-6',
+          model: config.model ?? MODELS.opus,
           running,
           todayTurns: stats.todayTurns,
           todayCost: stats.todayCost,
@@ -688,7 +695,7 @@ export function startDashboard(botApi?: Api<RawApi>): void {
     } catch { /* registry not available */ }
 
     const allAgents = [
-      { id: 'main', name: 'Main', description: 'Primary WildClaude bot', model: 'claude-opus-4-6', lane: 'coordination', running: mainRunning, todayTurns: mainStats.todayTurns, todayCost: mainStats.todayCost },
+      { id: 'main', name: 'Main', description: 'Primary WildClaude bot', model: MODELS.opus, lane: 'coordination', running: mainRunning, todayTurns: mainStats.todayTurns, todayCost: mainStats.todayCost },
       ...agents.map(a => ({ ...a, lane: '' })),
       ...registryAgents,
     ];
@@ -747,7 +754,7 @@ export function startDashboard(botApi?: Api<RawApi>): void {
     if (!body?.id || !body?.lane) return c.json({ error: 'id and lane required' }, 400);
     try {
       const { createAgent } = await import('./evolution.js');
-      const agentPath = createAgent(body.id, body.name || body.id, body.description || '', body.model || 'claude-sonnet-4-6', body.lane, body.systemPrompt || `# ${body.name || body.id}\n\nYou are a ${body.id} agent.\n`);
+      const agentPath = createAgent(body.id, body.name || body.id, body.description || '', body.model || MODELS.sonnet, body.lane, body.systemPrompt || `# ${body.name || body.id}\n\nYou are a ${body.id} agent.\n`);
       return c.json({ ok: true, path: agentPath });
     } catch (err) { return c.json({ error: String(err) }, 500); }
   });
@@ -781,7 +788,7 @@ export function startDashboard(botApi?: Api<RawApi>): void {
     const model = body?.model?.trim();
     if (!model) return c.json({ error: 'model required' }, 400);
 
-    const validModels = ['claude-opus-4-6', 'claude-sonnet-4-6', 'claude-sonnet-4-5', 'claude-haiku-4-5'];
+    const validModels = [...Object.values(MODELS) as string[], 'claude-sonnet-4-5'];
     if (!validModels.includes(model)) return c.json({ error: `Invalid model. Valid: ${validModels.join(', ')}` }, 400);
 
     try {
@@ -818,7 +825,7 @@ export function startDashboard(botApi?: Api<RawApi>): void {
     const model = body?.model?.trim();
     if (!model) return c.json({ error: 'model required' }, 400);
 
-    const validModels = ['claude-opus-4-6', 'claude-sonnet-4-6', 'claude-sonnet-4-5', 'claude-haiku-4-5'];
+    const validModels = [...Object.values(MODELS) as string[], 'claude-sonnet-4-5'];
     if (!validModels.includes(model)) return c.json({ error: `Invalid model` }, 400);
 
     const agentIds = listAgentIds();

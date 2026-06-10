@@ -33,7 +33,7 @@ Use this pair when your context window fills up or you want a clean slate while 
 Without a manual override, the router classifies each message:
 - **SIMPLE** (greetings, status, yes/no) → Haiku 4.5
 - **MEDIUM** (code tasks, standard questions) → Sonnet 4.6
-- **COMPLEX** (architecture, planning, creative) → Opus 4.6
+- **COMPLEX** (architecture, planning, creative) → Opus 4.8
 
 If `ANTHROPIC_API_KEY` is set, Haiku is called for classification (~$0.001, ~200ms). Without it, pattern matching is used (works with subscription via Claude CLI).
 

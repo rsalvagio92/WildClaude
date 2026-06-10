@@ -13,6 +13,7 @@ import { Bot, Context } from 'grammy';
 import { PROJECT_ROOT } from './config.js';
 import { logger } from './logger.js';
 import { USER_DATA_DIR, evolutionLogPath } from './paths.js';
+import { MODELS } from './models.js';
 
 // ── Evolution log ────────────────────────────────────────────────────
 
@@ -237,11 +238,11 @@ ${description}
 
     // Default model by lane
     const modelMap: Record<string, string> = {
-      build: 'claude-sonnet-4-6',
-      review: 'claude-opus-4-6',
-      domain: 'claude-sonnet-4-6',
-      coordination: 'claude-opus-4-6',
-      life: 'claude-sonnet-4-6',
+      build: MODELS.sonnet,
+      review: MODELS.opus,
+      domain: MODELS.sonnet,
+      coordination: MODELS.opus,
+      life: MODELS.sonnet,
     };
 
     const systemPrompt = `# Role

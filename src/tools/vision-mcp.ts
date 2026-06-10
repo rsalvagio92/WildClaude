@@ -20,6 +20,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import { serveStdio } from './mcp-stdio.js';
 import { readEnvFile } from '../env.js';
 import { juice } from '../token-juice.js';
+import { MODELS } from '../models.js';
 
 function loadClient(): Anthropic | null {
   const secrets = readEnvFile(['ANTHROPIC_API_KEY']);
@@ -48,7 +49,7 @@ async function ask(imagePath: string, prompt: string): Promise<string> {
   }
   const img = loadImage(imagePath);
   const resp = await client.messages.create({
-    model: 'claude-haiku-4-5',
+    model: MODELS.haiku,
     max_tokens: 1024,
     messages: [
       {

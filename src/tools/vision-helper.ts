@@ -13,6 +13,7 @@ import path from 'path';
 import Anthropic from '@anthropic-ai/sdk';
 
 import { readEnvFile } from '../env.js';
+import { MODELS } from '../models.js';
 
 let client: Anthropic | null = null;
 
@@ -40,7 +41,7 @@ async function ask(p: string, prompt: string): Promise<string | null> {
   if (!fs.existsSync(p)) return null;
   const data = fs.readFileSync(p).toString('base64');
   const resp = await c.messages.create({
-    model: 'claude-haiku-4-5',
+    model: MODELS.haiku,
     max_tokens: 512,
     messages: [
       {

@@ -93,11 +93,32 @@ function annotateFrontmatter(content: string, sourceUrl: string): string {
 }
 
 /**
+ * SSRF guard: only https, and never localhost / private / link-local ranges.
+ * Without this, /skill_install http://localhost:3141/... could be used to
+ * read internal services through the bot.
+ */
+function validateSkillUrl(url: string): string | null {
+  let parsed: URL;
+  try { parsed = new URL(url); } catch { return 'Invalid URL'; }
+  if (parsed.protocol !== 'https:') return 'Only https:// skill sources are allowed';
+  const host = parsed.hostname.toLowerCase();
+  const isPrivate =
+    host === 'localhost' || host === '0.0.0.0' || host === '::1' ||
+    /^127\./.test(host) || /^10\./.test(host) || /^192\.168\./.test(host) ||
+    /^172\.(1[6-9]|2\d|3[01])\./.test(host) || /^169\.254\./.test(host) ||
+    host.endsWith('.local') || host.endsWith('.internal') || !host.includes('.');
+  if (isPrivate) return 'Refusing to fetch from a private/internal host';
+  return null;
+}
+
+/**
  * Fetch + parse + scrub. Returns the proposed write location and content
  * without actually writing yet — the Telegram command commits after preview.
  */
 export async function fetchSkill(ref: string): Promise<ImportResult> {
   const url = resolveUrl(ref);
+  const urlError = validateSkillUrl(url);
+  if (urlError) return { ok: false, error: urlError };
   let response: Response;
   try {
     response = await fetch(url, {

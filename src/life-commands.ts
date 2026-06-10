@@ -19,6 +19,7 @@ import { ALLOWED_CHAT_ID } from './config.js';
 import { deleteMemory, getRecentMemories, saveStructuredMemory } from './db.js';
 import { logger } from './logger.js';
 import { lifePath } from './paths.js';
+import { MODELS } from './models.js';
 
 // ── Path helpers ─────────────────────────────────────────────────────────────
 
@@ -465,7 +466,7 @@ export function registerLifeCommands(bot: Bot<Context>): void {
         ? `[Lesson Input: ${args}]\n\nStep 1: Confirm this lesson description. If it seems complete, proceed to steps 2-4. If not clear, ask me to clarify in one sentence.\n\nStep 2: Reconstruct what went wrong from context if needed. Then categorize as: misunderstanding | code_bug | workflow | communication | memory | context_missing\n\nStep 3: Save to 3 places: (1) memory file in ~/.wild-claude-pi/memories/YYYY-MM/YYYY-MM-DD-lesson-<slug>.md, (2) append to ~/.wild-claude-pi/reflections.jsonl, (3) append to ~/.wild-claude-pi/lessons-learned.md.\n\nStep 4: Confirm with a brief response listing the error and the rule.`
         : `Capture a lesson learned. You have context from our conversation.\n\nStep 1: Look at the recent conversation (last 5-10 exchanges). Identify what went wrong, what should have happened, and why.\n\nStep 2: Categorize: misunderstanding | code_bug | workflow | communication | memory | context_missing\n\nStep 3: Save to 3 places: (1) memory file in ~/.wild-claude-pi/memories/YYYY-MM/YYYY-MM-DD-lesson-<slug>.md with frontmatter (type: lesson_learned, date, category, importance: 0.95, pinned: true), (2) append to ~/.wild-claude-pi/reflections.jsonl (one JSON line), (3) append to ~/.wild-claude-pi/lessons-learned.md.\n\nStep 4: Respond concisely with the error and the rule going forward.`;
 
-      const result = await runAgent(prompt, undefined, () => void ctx.api.sendChatAction(ctx.chat!.id, 'typing'), undefined, 'claude-opus-4-6');
+      const result = await runAgent(prompt, undefined, () => void ctx.api.sendChatAction(ctx.chat!.id, 'typing'), undefined, MODELS.opus);
 
       if (result.text) {
         const parts = result.text.split('\n\n');
