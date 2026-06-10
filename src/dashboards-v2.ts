@@ -424,6 +424,47 @@ export async function generateDashboard(request: string, opts: { projectId?: str
   }
 }
 
+// ── Conversational refinement ──────────────────────────────────────────────
+//
+// Take an existing spec + a plain-language (or voice-transcribed) instruction
+// and return an updated spec. Widget ids are PRESERVED for any kept widget so
+// logged tracker data (keyed by widget id) and readWidget links stay intact.
+
+const REFINE_PROMPT = (spec: DashboardSpec, instruction: string) => `You are editing an existing personal dashboard. Apply the user's instruction and output ONLY the complete, updated dashboard JSON (same schema) — no prose, no code fence.
+
+Current dashboard JSON:
+${JSON.stringify({ title: spec.title, icon: spec.icon, description: spec.description, widgets: spec.widgets }, null, 2)}
+
+User instruction: "${instruction}"
+
+Rules:
+- Return the FULL updated spec (all widgets you want to keep, not just changes).
+- PRESERVE the "id" of every widget you keep unchanged or merely tweak — only assign new ids to genuinely new widgets. Tracker data and "readWidget" links are keyed by widget id, so renaming an existing widget loses its data.
+- Keep working data sources intact unless asked to change them. Honour the same widget schema (types: metric, chart, table, list, feed, form, note, gauge, insight; local aggs: last/sum/avg/count/list/streak/delta).
+- Respect requests about size ("bigger" → larger w up to 12), order, adding/removing widgets, changing chart kinds, targets, units, time ranges, titles.
+- Keep w values sensible so rows tile a 12-col grid.`;
+
+export async function refineDashboard(id: string, instruction: string): Promise<{ ok: boolean; spec?: DashboardSpec; error?: string }> {
+  const current = getDashboard(id);
+  if (!current) return { ok: false, error: 'No such dashboard' };
+  try {
+    const { MODELS } = await import('./models.js');
+    const raw = await ask(REFINE_PROMPT(current, instruction), MODELS.opus);
+    const parsed = extractJson<Partial<DashboardSpec>>(raw);
+    if (!parsed || !Array.isArray(parsed.widgets)) return { ok: false, error: 'Could not parse the updated dashboard.' };
+    // Preserve identity: keep the same id, projectId, template marker, createdAt.
+    const merged = normalizeSpec(
+      { ...parsed, id: current.id, projectId: current.projectId, builtinTemplate: current.builtinTemplate, createdAt: current.createdAt },
+      { id: current.id, projectId: current.projectId },
+    );
+    const spec = saveDashboard(merged);
+    logger.info({ id: spec.id, widgets: spec.widgets.length }, 'dashboard refined');
+    return { ok: true, spec };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : 'refine failed' };
+  }
+}
+
 // ── Voice / natural-language entry parsing ─────────────────────────────────
 //
 // A tracker form widget can be filled by speaking. The browser transcribes via
@@ -558,6 +599,14 @@ export function registerDashboardV2Routes(app: Hono): void {
     if (!body.widgetId || !body.values) return c.json({ error: 'widgetId and values required' }, 400);
     const rowId = recordEntry(spec.id, body.widgetId, body.values);
     return c.json({ ok: true, id: rowId }, 201);
+  });
+
+  // Conversational/voice refinement: update the spec from a plain-language instruction.
+  app.post('/api/dash/:id/refine', async (c) => {
+    const body = await c.req.json().catch(() => ({})) as { prompt?: string };
+    if (!body.prompt) return c.json({ error: 'prompt required' }, 400);
+    const res = await refineDashboard(c.req.param('id'), body.prompt);
+    return res.ok ? c.json({ dashboard: res.spec }) : c.json({ error: res.error }, 422);
   });
 
   // Voice/NL → structured field values for a form widget (browser transcribes, we map).

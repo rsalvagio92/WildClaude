@@ -1158,6 +1158,7 @@ export function createBot(): Bot {
     { command: 'voice', description: 'Toggle voice mode' },
     { command: 'dashboard', description: 'Open web dashboard' },
     { command: 'dashboard_create', description: 'Generate a custom dashboard from a description' },
+    { command: 'dashboard_edit', description: 'Improve a dashboard by prompt or voice' },
     { command: 'project', description: 'Show or set the active project for this chat' },
     { command: 'status', description: 'Health check' },
     { command: 'lock', description: 'Lock session (PIN)' },
@@ -1522,6 +1523,38 @@ export function createBot(): Bot {
       await ctx.reply(`Created <b>${res.spec.icon || '📊'} ${res.spec.title}</b> with ${res.spec.widgets.length} widgets.${link}`, { parse_mode: 'HTML' });
     } catch (e) {
       await ctx.reply(`Dashboard generation failed: ${e instanceof Error ? e.message : 'error'}`);
+    }
+  });
+
+  // /dashboard_edit [<id> <instruction>] — improve a dashboard by prompt or voice.
+  // (Telegram voice messages are transcribed to text upstream, so the instruction
+  // can be spoken.) With no args, lists dashboards and their ids.
+  bot.command('dashboard_edit', async (ctx) => {
+    if (!isAuthorised(ctx.chat!.id)) return;
+    if (await replyIfLocked(ctx)) return;
+    const arg = ctx.match?.trim() || '';
+    const { listDashboards, refineDashboard } = await import('./dashboards-v2.js');
+    const base = DASHBOARD_URL || `http://localhost:${DASHBOARD_PORT}`;
+
+    const space = arg.indexOf(' ');
+    if (!arg || space === -1) {
+      const all = listDashboards();
+      const list = all.length
+        ? all.map((d) => `${d.icon || '📊'} ${d.title} — <code>${d.id}</code>`).join('\n')
+        : 'No dashboards yet. Create one with /dashboard_create.';
+      await ctx.reply(`Usage: /dashboard_edit &lt;id&gt; &lt;what to change&gt;\n(You can send the instruction as a voice message.)\n\n${list}`, { parse_mode: 'HTML' });
+      return;
+    }
+    const id = arg.slice(0, space).trim();
+    const instruction = arg.slice(space + 1).trim();
+    await ctx.reply('Applying your changes…');
+    try {
+      const res = await refineDashboard(id, instruction);
+      if (!res.ok || !res.spec) { await ctx.reply(`Could not update it: ${res.error || 'unknown error'}`); return; }
+      const link = DASHBOARD_TOKEN ? `\n\n<a href="${base}/?token=${DASHBOARD_TOKEN}#/builder?id=${res.spec.id}">Open it</a>` : '';
+      await ctx.reply(`Updated <b>${res.spec.icon || '📊'} ${res.spec.title}</b> — now ${res.spec.widgets.length} widgets.${link}`, { parse_mode: 'HTML' });
+    } catch (e) {
+      await ctx.reply(`Dashboard update failed: ${e instanceof Error ? e.message : 'error'}`);
     }
   });
 

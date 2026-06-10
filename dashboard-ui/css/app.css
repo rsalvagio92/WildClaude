@@ -153,6 +153,13 @@ input[type="range"] { width: 100%; accent-color: var(--accent); }
 .btn.rec { color: #f87171; border-color: #f87171; animation: recpulse 1.1s ease-in-out infinite; }
 @keyframes recpulse { 0%,100% { opacity: 1; } 50% { opacity: .55; } }
 
+/* Edit-mode per-widget tools */
+.dash-tile.editing { outline: 1px dashed var(--border); outline-offset: 2px; }
+.tile-tools { gap: 2px; }
+.icon-btn.sm { padding: 1px 6px; font-size: 12px; line-height: 1.4; min-width: 22px; }
+.icon-btn.sm.danger { color: #f87171; }
+.icon-btn.sm.danger:hover { background: rgba(248, 113, 113, .12); }
+
 .stat { background: var(--bg-elev); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px 16px; }
 .stat .v { font-size: 24px; font-weight: 700; }
 .stat .k { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; margin-top: 2px; }

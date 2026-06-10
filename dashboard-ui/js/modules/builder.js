@@ -189,36 +189,42 @@ function viewSpec(id) {
 
 // ── Open one dashboard: render its widget grid ─────────────────────────
 
-function openDashboard(root, id) {
+function openDashboard(root, id, opts = {}) {
   clear(root);
+  const editing = !!opts.editing;
   const head = el('div.page-head', {}, [
     el('div', {}, [el('h3', { text: 'Loading…' })]),
-    el('div.btn-row', {}, [
-      el('button.btn', { text: '← All dashboards', onclick: () => renderIndex(root) }),
-      el('button.icon-btn', { text: '⟳', onclick: () => openDashboard(root, id) }),
-    ]),
+    el('div.btn-row', {}, [el('button.btn', { text: '← All dashboards', onclick: () => renderIndex(root) })]),
   ]);
   const grid = el('div.dash-grid');
   mount(root, head, grid);
   mount(grid, loading('Loading widgets…'));
 
   api.get('/api/dash/' + encodeURIComponent(id)).then(({ dashboard }) => {
+    const reopen = (o) => openDashboard(root, id, o);
     mount(head, el('div', {}, [
       el('h3', { text: `${dashboard.icon || '📊'} ${dashboard.title}` }),
       dashboard.description ? el('p.muted', { text: dashboard.description, style: 'font-size:12px' }) : null,
     ]), el('div.btn-row', {}, [
-      el('button.btn', { text: '← All dashboards', onclick: () => renderIndex(root) }),
-      el('button.icon-btn', { text: '⟳', onclick: () => openDashboard(root, id) }),
+      el('button.btn.btn-accent', { text: '✨ Improve', onclick: () => openImprove(dashboard, () => reopen({ editing })) }),
+      el('button.btn' + (editing ? '.btn-accent' : ''), { text: editing ? '✓ Done' : '✎ Edit', onclick: () => reopen({ editing: !editing }) }),
+      el('button.btn.btn-sm', { text: '{ } Spec', onclick: () => editSpec(dashboard, () => reopen({ editing })) }),
+      el('button.icon-btn', { text: '⟳', onclick: () => reopen({ editing }) }),
+      el('button.btn', { text: '← All', onclick: () => renderIndex(root) }),
     ]));
     clear(grid);
-    for (const w of dashboard.widgets || []) grid.appendChild(widgetTile(dashboard.id, w));
+    const widgets = dashboard.widgets || [];
+    widgets.forEach((w, i) => grid.appendChild(widgetTile(dashboard, w, i, editing, () => reopen({ editing }))));
   }).catch((e) => mount(grid, errbox(e.message)));
 }
 
-function widgetTile(dashId, w) {
+function widgetTile(dashboard, w, index, editing, reload) {
+  const dashId = dashboard.id;
   const span = Math.min(12, Math.max(1, w.w || 4));
-  const tile = el('div.dash-tile', { style: `grid-column: span ${span};` });
-  const head = el('div.row', {}, [el('h4', { text: w.title, style: 'margin:0;font-size:14px' })]);
+  const tile = el('div.dash-tile' + (editing ? '.editing' : ''), { style: `grid-column: span ${span};` });
+  const headChildren = [el('h4', { text: w.title, style: 'margin:0;font-size:14px;flex:1' })];
+  if (editing) headChildren.push(widgetEditControls(dashboard, index, reload));
+  const head = el('div.row', {}, headChildren);
   const bodyBox = el('div', { style: 'margin-top:8px' });
   mount(tile, head, bodyBox);
 
@@ -240,6 +246,83 @@ function widgetTile(dashId, w) {
     const t = setInterval(() => { if (document.body.contains(tile)) load(); else clearInterval(t); }, w.refreshSec * 1000);
   }
   return tile;
+}
+
+// ── Direct editing: per-widget controls + raw spec + conversational refine ──
+
+function widgetEditControls(dashboard, index, reload) {
+  const save = async (mutate) => {
+    const widgets = dashboard.widgets.map((x) => ({ ...x }));
+    mutate(widgets);
+    try { await api.put('/api/dash/' + encodeURIComponent(dashboard.id), { ...dashboard, widgets }); reload(); }
+    catch (e) { toastErr(e.message); }
+  };
+  return el('div.btn-row.tile-tools', {}, [
+    el('button.icon-btn.sm', { title: 'Narrower', text: '−', onclick: () => save((ws) => { ws[index].w = Math.max(1, (ws[index].w || 4) - 2); }) }),
+    el('button.icon-btn.sm', { title: 'Wider', text: '+', onclick: () => save((ws) => { ws[index].w = Math.min(12, (ws[index].w || 4) + 2); }) }),
+    el('button.icon-btn.sm', { title: 'Move left', text: '◀', onclick: () => save((ws) => { if (index > 0) { const t = ws[index - 1]; ws[index - 1] = ws[index]; ws[index] = t; } }) }),
+    el('button.icon-btn.sm', { title: 'Move right', text: '▶', onclick: () => save((ws) => { if (index < ws.length - 1) { const t = ws[index + 1]; ws[index + 1] = ws[index]; ws[index] = t; } }) }),
+    el('button.icon-btn.sm.danger', { title: 'Delete widget', text: '✕', onclick: () => confirmDialog(`Delete widget "${dashboard.widgets[index].title}"?`, () => save((ws) => { ws.splice(index, 1); }), { danger: true, confirmText: 'Delete' }) }),
+  ]);
+}
+
+// Conversational / voice refinement of the whole dashboard.
+function openImprove(dashboard, reload) {
+  const ta = el('textarea', { rows: 3, style: 'width:100%', placeholder: 'e.g. "make the weight chart full width and add a 7-day average; drop the table; add a steps goal of 10,000"' });
+  const mic = micButton((t) => { ta.value = (ta.value ? ta.value + ' ' : '') + t; ta.focus(); }, { title: 'Speak your changes' });
+  const examples = el('div.chip-row', { style: 'margin-bottom:8px' },
+    ['Make it more visual', 'Add a goal gauge', 'Bigger charts', 'Add an AI insight', 'Remove the table', 'Add a streak counter'].map((s) =>
+      el('span.chip', { text: s, onclick: () => { ta.value = (ta.value ? ta.value + '. ' : '') + s; ta.focus(); } })));
+  const m = modal({
+    title: '✨ Improve this dashboard',
+    wide: true,
+    body: [
+      el('p.muted', { text: 'Describe the changes in plain language — or tap the mic and speak them. Your logged data is preserved.' }),
+      examples,
+      el('div.field', {}, [el('div.row', {}, [el('label', { text: 'What should change?', style: 'flex:1' }), mic].filter(Boolean)), ta]),
+    ],
+    footer: [
+      el('button.btn', { text: 'Cancel', onclick: () => m.close() }),
+      el('button.btn.btn-accent', {
+        text: 'Apply',
+        onclick: async (ev) => {
+          const prompt = ta.value.trim();
+          if (!prompt) { toastErr('Describe a change first'); return; }
+          ev.target.disabled = true; ev.target.textContent = 'Applying…';
+          try {
+            const { dashboard: upd } = await api.post('/api/dash/' + encodeURIComponent(dashboard.id) + '/refine', { prompt });
+            toastOk(`Updated — ${upd.widgets.length} widgets`);
+            m.close();
+            reload();
+          } catch (e) { toastErr(e.message); ev.target.disabled = false; ev.target.textContent = 'Apply'; }
+        },
+      }),
+    ],
+  });
+  ta.focus();
+}
+
+// Editable raw spec (power users).
+function editSpec(dashboard, reload) {
+  const ta = el('textarea', { rows: 20, style: 'width:100%;font-family:monospace;font-size:12px' });
+  ta.value = JSON.stringify(dashboard, null, 2);
+  const m = modal({
+    title: 'Edit spec (JSON)',
+    wide: true,
+    body: [el('p.muted', { text: 'Advanced — edit the raw dashboard spec. Saving replaces the whole spec; widget ids drive tracker data, so keep them stable.' }), el('div.field', {}, [ta])],
+    footer: [
+      el('button.btn', { text: 'Cancel', onclick: () => m.close() }),
+      el('button.btn.btn-accent', {
+        text: 'Save',
+        onclick: async () => {
+          let spec;
+          try { spec = JSON.parse(ta.value); } catch (e) { toastErr('Invalid JSON: ' + e.message); return; }
+          try { await api.put('/api/dash/' + encodeURIComponent(dashboard.id), spec); toastOk('Saved'); m.close(); reload(); }
+          catch (e) { toastErr(e.message); }
+        },
+      }),
+    ],
+  });
 }
 
 // ── Widget renderers by type ───────────────────────────────────────────
@@ -400,13 +483,14 @@ function formWidget(dashId, w) {
   return el('div', {}, [...rows, btnRow]);
 }
 
-// 🎤 Speak an entry — browser transcribes (Web Speech API), backend maps the
-// free text onto this form's fields (Haiku), and we prefill the inputs.
-function voiceButton(dashId, w, fill) {
+// Reusable 🎤 button backed by the Web Speech API. Returns null where the
+// browser has no speech recognition (button is simply omitted). Calls
+// onText(transcript) when a phrase is recognised.
+function micButton(onText, { label = '🎤 Speak', title = 'Speak' } = {}) {
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-  if (!SR) return null; // unsupported browser — silently omit
+  if (!SR) return null;
   let listening = false;
-  const btn = el('button.btn.btn-sm', { title: 'Speak an entry', text: '🎤 Speak' });
+  const btn = el('button.btn.btn-sm', { type: 'button', title, text: label });
   btn.onclick = () => {
     if (listening) return;
     const rec = new SR();
@@ -414,20 +498,23 @@ function voiceButton(dashId, w, fill) {
     rec.interimResults = false;
     rec.maxAlternatives = 1;
     listening = true; btn.textContent = '● Listening…'; btn.classList.add('rec');
-    rec.onresult = async (ev) => {
-      const transcript = ev.results[0][0].transcript;
-      btn.textContent = '… mapping';
-      try {
-        const { values } = await api.post(`/api/dash/${encodeURIComponent(dashId)}/parse-entry`, { widgetId: w.id, transcript });
-        fill(values);
-        toastOk(`Heard: "${transcript}"`);
-      } catch (e) { toastErr(e.message); }
-    };
-    rec.onerror = (ev) => { toastErr('Voice error: ' + (ev.error || 'unknown')); };
-    rec.onend = () => { listening = false; btn.textContent = '🎤 Speak'; btn.classList.remove('rec'); };
-    try { rec.start(); } catch { listening = false; btn.textContent = '🎤 Speak'; btn.classList.remove('rec'); }
+    rec.onresult = (ev) => { try { onText(ev.results[0][0].transcript); } catch (e) { toastErr(e.message); } };
+    rec.onerror = (ev) => toastErr('Voice error: ' + (ev.error || 'unknown'));
+    rec.onend = () => { listening = false; btn.textContent = label; btn.classList.remove('rec'); };
+    try { rec.start(); } catch { listening = false; btn.textContent = label; btn.classList.remove('rec'); }
   };
   return btn;
+}
+
+// 🎤 on a tracker form: transcribe → backend maps text onto fields → prefill.
+function voiceButton(dashId, w, fill) {
+  return micButton(async (transcript) => {
+    try {
+      const { values } = await api.post(`/api/dash/${encodeURIComponent(dashId)}/parse-entry`, { widgetId: w.id, transcript });
+      fill(values);
+      toastOk(`Heard: "${transcript}"`);
+    } catch (e) { toastErr(e.message); }
+  }, { title: 'Speak an entry' });
 }
 
 function safeStringify(data) {
