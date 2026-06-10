@@ -64,11 +64,21 @@ export const api = {
   del: (p) => apiFetch(p, { method: 'DELETE' }),
 };
 
-// Download a file endpoint as an attachment (auth via query token).
-export function downloadUrl(path) {
-  const token = sessionStorage.getItem(TOKEN_KEY) || '';
+// Fetch a short-lived signed ticket for URL-based auth (SSE, downloads) so the
+// raw token never lands in a URL/log. Cached ~50s (server TTL is 60s).
+let _ticket = { value: '', exp: 0 };
+export async function getTicket() {
+  if (_ticket.value && Date.now() < _ticket.exp) return _ticket.value;
+  const r = await apiFetch('/api/ticket', { method: 'POST' });
+  _ticket = { value: r.ticket, exp: Date.now() + Math.max(5000, (r.expiresInMs || 60000) - 10000) };
+  return _ticket.value;
+}
+
+// Build a download/stream URL authed by a fresh ticket (not the raw token).
+export async function ticketUrl(path) {
+  const t = await getTicket();
   const sep = path.includes('?') ? '&' : '?';
-  return `${path}${sep}token=${encodeURIComponent(token)}`;
+  return `${path}${sep}ticket=${encodeURIComponent(t)}`;
 }
 
 // The active chat id used across modules (single-user bot → owner chat).

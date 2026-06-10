@@ -23,6 +23,24 @@ export const MODELS = {
 
 export type ModelTier = keyof typeof MODELS;
 
+/** Context window (tokens) per model family, for accurate usage gauges. */
+export const CONTEXT_WINDOWS: Record<string, number> = {
+  'claude-fable-5': 1_000_000,
+  'claude-opus-4-8': 1_000_000,
+  'claude-sonnet-4-6': 1_000_000,
+  'claude-haiku-4-5': 200_000,
+};
+
+/**
+ * Context window for a model string (alias, canonical, or dated). Falls back
+ * to 200K — the smallest current window — so an unknown model never
+ * over-reports headroom.
+ */
+export function contextWindowFor(model?: string): number {
+  const id = normalizeModel(model);
+  return (id && CONTEXT_WINDOWS[id]) || 200_000;
+}
+
 /**
  * Router tier → canonical model ID. COMPLEX stays on Opus (Fable costs 2x);
  * use `/model fable` to pin the top tier for a chat.

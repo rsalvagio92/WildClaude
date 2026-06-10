@@ -1,6 +1,6 @@
 // Single shared SSE connection to /api/chat/stream with auto-reconnect.
 // Modules subscribe to event types; the connection is opened once at app start.
-import { getToken } from './api.js';
+import { getToken, getTicket } from './api.js';
 
 const listeners = new Map(); // type -> Set<fn>
 let source = null;
@@ -23,11 +23,15 @@ function setConnected(v) {
 // each type must be registered with addEventListener.
 const SSE_EVENTS = ['processing', 'user_message', 'assistant_message', 'progress', 'error', 'ping', 'mission_update'];
 
-export function startSSE() {
-  const token = getToken();
-  if (!token) return;
+export async function startSSE() {
+  if (!getToken()) return;
   if (source) source.close();
-  source = new EventSource(`/api/chat/stream?token=${encodeURIComponent(token)}`);
+  // Authenticate the stream with a short-lived ticket, not the raw token in
+  // the URL. A fresh ticket is fetched on every (re)connect so it never expires
+  // mid-stream's lifetime budget.
+  let ticket;
+  try { ticket = await getTicket(); } catch { setTimeout(startSSE, backoff); backoff = Math.min(backoff * 2, 30000); return; }
+  source = new EventSource(`/api/chat/stream?ticket=${encodeURIComponent(ticket)}`);
   source.onopen = () => { backoff = 1000; setConnected(true); };
   const handle = (type) => (ev) => {
     if (type === 'ping') return; // keepalive

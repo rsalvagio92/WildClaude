@@ -1,6 +1,6 @@
 // Memory Palace — stats, browse/filter/search, pin/delete, detail modal,
 // export, and a RAG / context-injection X-ray (keyword FTS vs semantic recall).
-import { api, chatId, downloadUrl } from '../api.js';
+import { api, chatId } from '../api.js';
 import {
   el, mount, clear, escapeHtml, asyncView, stat, badge, card, modal,
   confirmDialog, toast, toastOk, toastErr, action, loading, empty, errbox,

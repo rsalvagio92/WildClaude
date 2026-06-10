@@ -1,6 +1,6 @@
 // System Vitals — CPU/RAM/disk/network, token & cost, system update, device controls.
 import { api } from '../api.js';
-import { el, mount, clear, asyncView, stat, card, badge, toast, toastErr, confirmDialog, fmtUsd, fmtTime, loading, errbox } from '../ui.js';
+import { el, mount, clear, asyncView, stat, card, badge, toast, toastErr, confirmDialog, fmtUsd, fmtTime, loading, errbox, barChart } from '../ui.js';
 
 export default {
   async mount(view) {
@@ -44,6 +44,13 @@ export default {
     asyncView(tokensCard, () => api.get('/api/tokens'), (t) => {
       const st = t.stats || {};
       const recent = t.recentUsage || [];
+      const timeline = t.costTimeline || [];
+      const chart = timeline.length >= 2
+        ? el('div', { style: 'margin-top:12px' }, [
+            el('div.dim', { style: 'font-size:11px;margin-bottom:4px', text: `Daily cost — last ${timeline.length} days` }),
+            barChart(timeline.map((d) => ({ label: d.date, value: d.cost || 0, display: fmtUsd(d.cost || 0) }))),
+          ])
+        : null;
       return card('Token & Cost', [
         el('div.grid.grid-stat', {}, [
           stat(st.todayTurns ?? st.turns ?? 0, 'Turns today'),
@@ -51,6 +58,7 @@ export default {
           stat((st.totalInputTokens ?? 0).toLocaleString(), 'Input tokens'),
           stat((st.totalOutputTokens ?? 0).toLocaleString(), 'Output tokens'),
         ]),
+        chart,
         recent.length ? el('div.table-wrap', { style: 'margin-top:12px' }, [el('table', {}, [
           el('thead', {}, el('tr', {}, [el('th', { text: 'When' }), el('th', { text: 'Model' }), el('th', { text: 'In' }), el('th', { text: 'Out' }), el('th', { text: 'Cost' })])),
           el('tbody', {}, recent.slice(0, 12).map((r) => el('tr', {}, [

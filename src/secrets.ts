@@ -317,15 +317,30 @@ export function getAvailableUpgrades(): Array<{ feature: string; secrets: Secret
 
 /**
  * Get a summary of all secrets and their status (set/missing).
+ * Includes both the known feature secrets AND any custom keys the user has
+ * stored via the dashboard/Telegram that aren't in the registry — otherwise
+ * a custom secret could be set but invisible (and thus undeletable) in the UI.
  */
-export function getSecretsStatus(): Array<{ key: string; name: string; feature: string; set: boolean; required: boolean }> {
-  return getAllSecretDefs().map(def => ({
+export function getSecretsStatus(): Array<{ key: string; name: string; feature: string; set: boolean; required: boolean; custom?: boolean }> {
+  const defs = getAllSecretDefs();
+  const known = new Set(defs.map((d) => d.key));
+  type SecretStatus = { key: string; name: string; feature: string; set: boolean; required: boolean; custom?: boolean };
+  const rows: SecretStatus[] = defs.map(def => ({
     key: def.key,
     name: def.name,
     feature: def.feature,
     set: !!getSecret(def.key),
     required: def.required,
   }));
+  // Append custom keys present in the encrypted store but not in the registry.
+  try {
+    const store = loadStore();
+    for (const key of Object.keys(store.secrets || {})) {
+      if (known.has(key)) continue;
+      rows.push({ key, name: key, feature: 'Custom', set: true, required: false, custom: true });
+    }
+  } catch { /* store unreadable — known defs only */ }
+  return rows;
 }
 
 // ── Telegram commands ────────────────────────────────────────────────

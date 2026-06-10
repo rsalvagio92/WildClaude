@@ -1,5 +1,15 @@
 // File Explorer — browse User Data / Project / System roots, preview & download files.
-import { api, downloadUrl } from '../api.js';
+import { api, ticketUrl } from '../api.js';
+
+// Trigger a ticket-authed download without putting the raw token in the URL.
+async function download(path, filename) {
+  try {
+    const url = await ticketUrl(path);
+    const a = document.createElement('a');
+    a.href = url; a.download = filename || '';
+    document.body.appendChild(a); a.click(); a.remove();
+  } catch (e) { /* surfaced by caller toast if needed */ }
+}
 import { el, mount, clear, asyncView, badge, toast, toastErr, loading, empty, errbox, fmtBytes, fmtTime } from '../ui.js';
 
 const ROOTS = [
@@ -83,9 +93,9 @@ export default {
       const q = `root=${encodeURIComponent(state.root)}&path=${encodeURIComponent(filePath)}` +
         (state.root === 'system' ? `&base=${encodeURIComponent(state.base)}` : '');
       asyncView(previewPane, () => api.get('/api/files/read?' + q), (data) => {
-        const dl = el('a.btn.btn-sm', {
-          text: '↓ Download', download: name,
-          href: downloadUrl(`/api/files/download?${q}`),
+        const dl = el('button.btn.btn-sm', {
+          text: '↓ Download',
+          onclick: () => download(`/api/files/download?${q}`, name),
         });
         return [
           el('div.page-head', {}, [
@@ -126,7 +136,7 @@ export default {
             el('span', { text: '📄', style: 'width:20px' }),
             el('div.grow', { text: f.name, style: 'cursor:pointer', onclick: () => previewFile(f.name) }),
             el('span.dim', { text: fmtBytes(f.size), style: 'font-size:12px' }),
-            el('a.btn.btn-sm.btn-ghost', { text: '↓', download: f.name, href: downloadUrl(`/api/files/download?${dlQ}`) }),
+            el('button.btn.btn-sm.btn-ghost', { text: '↓', onclick: () => download(`/api/files/download?${dlQ}`, f.name) }),
           ]);
         });
         return el('div', {}, rows);

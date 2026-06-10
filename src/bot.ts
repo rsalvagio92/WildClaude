@@ -63,6 +63,7 @@ const GLOBAL_STREAM_INTERVAL_MS = 2500;
 // MCP tools) can be 200-400k+ tokens. We track that baseline per session
 // so the warning reflects conversation growth, not fixed overhead.
 const CONTEXT_WARN_PCT = 0.75; // Warn when conversation fills 75% of available space
+const CONTEXT_CRITICAL_PCT = 0.92; // Auto-rotate the session past this point
 const lastUsage = new Map<string, UsageInfo>();
 const sessionBaseline = new Map<string, number>(); // sessionId -> first turn's input_tokens
 
@@ -109,11 +110,53 @@ function checkContextWarning(chatId: string, sessionId: string | undefined, usag
   const conversationTokens = contextTokens - baseline;
   const pct = Math.round((conversationTokens / available) * 100);
 
+  // Critical: auto-rotate so a runaway session can't silently overflow the
+  // window (the WB3 box had a 58-day session sitting over 90%). Clearing the
+  // session here means the NEXT message starts fresh; the hive-mind summary +
+  // memory system preserve continuity, and /respin can pull the handoff back.
+  if (pct >= Math.round(CONTEXT_CRITICAL_PCT * 100)) {
+    autoRotateSession(chatId, sessionId);
+    return `🔄 Context was nearly full (~${pct}%). I started a fresh session and saved a summary — continuity is preserved via memory. Use /respin if you want the previous thread's details carried over.`;
+  }
+
   if (pct >= Math.round(CONTEXT_WARN_PCT * 100)) {
     return `⚠️ Context window at ~${pct}% of available space (~${Math.round(conversationTokens / 1000)}k / ${Math.round(available / 1000)}k conversation tokens). Consider /newchat + /respin soon.`;
   }
 
   return null;
+}
+
+/**
+ * Rotate an overflowing session: snapshot a one-line summary to the hive mind,
+ * then clear the session so the next message starts fresh. Fire-and-forget —
+ * never blocks the reply.
+ */
+function autoRotateSession(chatId: string, sessionId: string | undefined): void {
+  try {
+    if (sessionId) sessionBaseline.delete(sessionId);
+    sessionBaseline.delete(chatId);
+    const toSummarize = sessionId;
+    clearSession(chatId, AGENT_ID);
+    logger.warn({ chatId, sessionId }, 'Auto-rotated session: context critical');
+    if (!toSummarize) return;
+    void (async () => {
+      try {
+        const turns = getSessionConversation(toSummarize, 40);
+        if (turns.length < 2) return;
+        const abort = new AbortController();
+        const timer = setTimeout(() => abort.abort(), 60_000);
+        const r = await runAgent(
+          'Summarize what we accomplished this session in ONE short sentence (under 100 chars). No preamble, no quotes.',
+          toSummarize, () => {}, undefined, undefined, abort,
+        );
+        clearTimeout(timer);
+        const summary = r.text?.trim();
+        if (summary) logToHiveMind(AGENT_ID, chatId, 'session_auto_rotate', summary.slice(0, 300));
+      } catch (err) { logger.warn({ err }, 'auto-rotate summary failed'); }
+    })();
+  } catch (err) {
+    logger.warn({ err, chatId }, 'autoRotateSession failed');
+  }
 }
 import {
   downloadTelegramFile,
@@ -810,7 +853,7 @@ export async function handleMessage(ctx: Context, message: string, forceVoiceRep
     }
 
     // Emit assistant response to SSE clients (include routing info)
-    emitChatEvent({ type: 'assistant_message', chatId: chatIdStr, content: rawResponse, source: 'telegram' });
+    emitChatEvent({ type: 'assistant_message', chatId: chatIdStr, content: rawResponse, source: 'telegram', model: routing.model, cost: result.usage?.totalCostUsd });
     if (routing.latencyMs > 0) {
       emitChatEvent({ type: 'progress', chatId: chatIdStr, description: `Routed: ${tierLabel(routing.tier)} (${routing.latencyMs}ms)` });
     }
@@ -2301,7 +2344,7 @@ async function processDashboardMessage(
     }
 
     // Emit assistant response to SSE clients
-    emitChatEvent({ type: 'assistant_message', chatId: chatIdStr, content: rawResponse, source: 'dashboard' });
+    emitChatEvent({ type: 'assistant_message', chatId: chatIdStr, content: rawResponse, source: 'dashboard', model: agentDefaultModel || undefined, cost: result.usage?.totalCostUsd });
 
     // Relay to Telegram so the user sees it there too
     const { text: responseText } = extractFileMarkers(rawResponse);

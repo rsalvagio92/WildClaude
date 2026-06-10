@@ -141,18 +141,47 @@ export function createWorkflow(name: string, prompt: string, cron: string): void
 }
 
 // ── Git tracking ────────────────────────────────────────────────────
+//
+// Runtime-created artifacts (agents, skills) live in USER_DATA_DIR, so we
+// version them in a git repo THERE — never in the code checkout (PROJECT_ROOT).
+// Committing to PROJECT_ROOT previously swept unrelated working-tree state into
+// noise commits and made the branch diverge from origin, breaking `wildclaude
+// upgrade` (git pull → "divergent branches"). USER_DATA_DIR gets its own repo,
+// auto-initialised on first use, fully decoupled from code deploys.
+
+let _userRepoReady = false;
+function ensureUserDataRepo(): boolean {
+  if (_userRepoReady) return true;
+  try {
+    fs.mkdirSync(USER_DATA_DIR, { recursive: true });
+    if (!fs.existsSync(path.join(USER_DATA_DIR, '.git'))) {
+      execSync('git init', { cwd: USER_DATA_DIR, stdio: 'pipe' });
+      // Local identity so commits work even without a global git config.
+      execSync('git config user.email "wildclaude@local"', { cwd: USER_DATA_DIR, stdio: 'pipe' });
+      execSync('git config user.name "WildClaude"', { cwd: USER_DATA_DIR, stdio: 'pipe' });
+      // Don't track secrets, the SQLite store, or transient scratch in the data repo.
+      const ignore = ['secrets.enc.json', 'store/', 'sandboxes/', 'uploads/', 'exports/', '*.log', '*.log.json', '.DS_Store'].join('\n') + '\n';
+      fs.writeFileSync(path.join(USER_DATA_DIR, '.gitignore'), ignore);
+      logger.info({ dir: USER_DATA_DIR }, 'Initialised user-data git repo for evolution tracking');
+    }
+    _userRepoReady = true;
+    return true;
+  } catch (err) {
+    logger.warn({ err }, 'Could not init user-data git repo — evolution will not be versioned');
+    return false;
+  }
+}
 
 function gitCommit(message: string): void {
+  if (!ensureUserDataRepo()) return;
   try {
-    execSync('git add -A', { cwd: PROJECT_ROOT, stdio: 'pipe' });
-    const result = spawnSync('git', ['commit', '-m', message, '--allow-empty'], {
-      cwd: PROJECT_ROOT,
-      stdio: 'pipe',
-    });
-    if (result.status !== 0) {
-      throw new Error(result.stderr?.toString() || 'git commit failed');
-    }
-    logger.info({ message }, 'Evolution committed to git');
+    execSync('git add -A', { cwd: USER_DATA_DIR, stdio: 'pipe' });
+    // Skip empty commits — only record when something actually changed.
+    const dirty = execSync('git status --porcelain', { cwd: USER_DATA_DIR, stdio: 'pipe' }).toString().trim();
+    if (!dirty) return;
+    const result = spawnSync('git', ['commit', '-m', message], { cwd: USER_DATA_DIR, stdio: 'pipe' });
+    if (result.status !== 0) throw new Error(result.stderr?.toString() || 'git commit failed');
+    logger.info({ message }, 'Evolution committed to user-data repo');
   } catch (err) {
     logger.warn({ err }, 'Git commit failed (non-fatal)');
   }

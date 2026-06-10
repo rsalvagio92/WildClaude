@@ -183,24 +183,48 @@ export function startDashboard(botApi?: Api<RawApi>): void {
     return c.json({ ok: true, uptimeSec: Math.round(process.uptime()) });
   });
 
+  // Short-lived HMAC tickets — for SSE and file downloads, which can't send an
+  // Authorization header (EventSource / anchor downloads), so the raw token
+  // would otherwise sit in the URL (and proxy/access logs). A ticket is
+  // `<expiryMs>.<hmac>` signed with DASHBOARD_TOKEN; stateless, ~60s TTL.
+  const issueTicket = (ttlMs = 60_000): string => {
+    const exp = Date.now() + ttlMs;
+    const mac = crypto.createHmac('sha256', DASHBOARD_TOKEN).update(String(exp)).digest('hex');
+    return `${exp}.${mac}`;
+  };
+  const verifyTicket = (ticket: string): boolean => {
+    const dot = ticket.indexOf('.');
+    if (dot < 1) return false;
+    const exp = parseInt(ticket.slice(0, dot), 10);
+    const mac = ticket.slice(dot + 1);
+    if (!Number.isFinite(exp) || exp < Date.now()) return false;
+    const expected = crypto.createHmac('sha256', DASHBOARD_TOKEN).update(String(exp)).digest('hex');
+    const a = Buffer.from(mac), b = Buffer.from(expected);
+    return a.length === b.length && crypto.timingSafeEqual(a, b);
+  };
+
+  const tokenValid = (token: string | undefined): boolean => {
+    if (!DASHBOARD_TOKEN || !token) return false;
+    const a = Buffer.from(token), b = Buffer.from(DASHBOARD_TOKEN);
+    return a.length === b.length && crypto.timingSafeEqual(a, b);
+  };
+
   // Token auth middleware (applies to /api/* only)
   app.use('/api/*', async (c, next) => {
-    // Accept token from Authorization header (preferred) or query param (fallback)
+    // Accept: Authorization: Bearer <token> (preferred), ?token=<token>
+    // (fallback), or ?ticket=<signed> (for SSE/downloads — no raw token in URL).
     const authHeader = c.req.header('Authorization');
-    const token = authHeader?.startsWith('Bearer ')
-      ? authHeader.slice(7)
-      : c.req.query('token');
-    if (!DASHBOARD_TOKEN || !token) {
-      return c.json({ error: 'Unauthorized' }, 401);
+    const token = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : c.req.query('token');
+    const ticket = c.req.query('ticket');
+    if (tokenValid(token) || (ticket && verifyTicket(ticket))) {
+      await next();
+      return;
     }
-    // Timing-safe comparison to prevent timing attacks
-    const a = Buffer.from(token);
-    const b = Buffer.from(DASHBOARD_TOKEN);
-    if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
-      return c.json({ error: 'Unauthorized' }, 401);
-    }
-    await next();
+    return c.json({ error: 'Unauthorized' }, 401);
   });
+
+  // Issue a short-lived ticket (caller is already authed by the middleware above).
+  app.post('/api/ticket', (c) => c.json({ ticket: issueTicket(), expiresInMs: 60_000 }));
 
   // Scheduled tasks
   app.get('/api/tasks', (c) => {
@@ -570,9 +594,10 @@ export function startDashboard(botApi?: Api<RawApi>): void {
   });
 
   // System health
-  app.get('/api/health', (c) => {
+  app.get('/api/health', async (c) => {
     const chatId = c.req.query('chatId') || ALLOWED_CHAT_ID || '';
     const sessionId = getSession(chatId);
+    const model = agentDefaultModel || 'claude-sonnet-4-6';
     let contextPct = 0;
     let turns = 0;
     let compactions = 0;
@@ -583,8 +608,14 @@ export function startDashboard(botApi?: Api<RawApi>): void {
       if (summary) {
         turns = summary.turns;
         compactions = summary.compactions;
-        const contextTokens = (summary.lastContextTokens || 0) + (summary.lastCacheRead || 0);
-        contextPct = contextTokens > 0 ? Math.round((contextTokens / CONTEXT_LIMIT) * 100) : 0;
+        // context_tokens already stores cacheRead + input (the full last-call
+        // context) — do NOT add lastCacheRead again (that double-counted the
+        // cache and produced >100% figures). Gauge against the model's real
+        // window, capped at 100 for display.
+        const { contextWindowFor } = await import('./models.js');
+        const windowTokens = contextWindowFor(model) || CONTEXT_LIMIT;
+        const contextTokens = summary.lastContextTokens || 0;
+        contextPct = contextTokens > 0 ? Math.min(100, Math.round((contextTokens / windowTokens) * 100)) : 0;
         const ageSec = Math.floor(Date.now() / 1000) - summary.firstTurnAt;
         if (ageSec < 3600) sessionAge = Math.floor(ageSec / 60) + 'm';
         else if (ageSec < 86400) sessionAge = Math.floor(ageSec / 3600) + 'h';
@@ -597,7 +628,7 @@ export function startDashboard(botApi?: Api<RawApi>): void {
       turns,
       compactions,
       sessionAge,
-      model: agentDefaultModel || 'sonnet-4-6',
+      model,
       telegramConnected: getTelegramConnected(),
       waConnected: WHATSAPP_ENABLED,
       slackConnected: !!SLACK_USER_TOKEN,

@@ -2,7 +2,7 @@
 import { api } from '../api.js';
 import {
   el, mount, clear, asyncView, stat, card, badge, modal,
-  fmtUsd, fmtTime, fmtAgo, truncate, escapeHtml, loading, errbox, empty,
+  fmtUsd, fmtTime, fmtAgo, truncate, escapeHtml, loading, errbox, empty, barChart,
 } from '../ui.js';
 
 export default {
@@ -56,6 +56,9 @@ export default {
         const daySection = byDay.length
           ? el('div', {}, [
               el('div.section-title', { text: 'By day' }),
+              byDay.length >= 2 ? el('div', { style: 'margin-bottom:10px' }, [
+                barChart(byDay.map((x) => ({ label: x.day, value: x.costUsd || 0, display: fmtUsd(x.costUsd || 0) }))),
+              ]) : null,
               el('div.table-wrap', {}, [el('table', {}, [
                 el('thead', {}, el('tr', {}, [
                   el('th', { text: 'Day' }), el('th', { text: 'Turns' }),

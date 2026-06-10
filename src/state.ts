@@ -36,6 +36,10 @@ export interface ChatEvent {
   source?: 'telegram' | 'dashboard';
   description?: string;
   processing?: boolean;
+  /** Model that produced an assistant_message (e.g. 'claude-sonnet-4-6'). */
+  model?: string;
+  /** USD cost of the turn that produced an assistant_message. */
+  cost?: number;
   timestamp: number;
 }
 

@@ -151,6 +151,58 @@ export function fmtBytes(b) {
 export function fmtUsd(n) { return '$' + (Number(n) || 0).toFixed(4); }
 export function truncate(s, n = 120) { s = String(s ?? ''); return s.length > n ? s.slice(0, n) + '…' : s; }
 
+// ── Charts (dependency-free inline SVG) ────────────────────────────────
+const SVGNS = 'http://www.w3.org/2000/svg';
+function svgEl(tag, attrs = {}) {
+  const n = document.createElementNS(SVGNS, tag);
+  for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, v);
+  return n;
+}
+
+/**
+ * Bar chart from [{label, value}]. Accent-coloured bars, value labels on hover
+ * (title), x-axis labels thinned to avoid crowding. Returns an SVG element.
+ */
+export function barChart(data, { height = 140, barColor } = {}) {
+  if (!data || !data.length) return empty('No data');
+  const color = barColor || getComputedStyle(document.documentElement).getPropertyValue('--accent').trim() || '#8b5cf6';
+  const W = Math.max(data.length * 14, 280), H = height, pad = 22;
+  const max = Math.max(...data.map((d) => d.value || 0), 1);
+  const bw = (W - pad * 2) / data.length;
+  const svg = svgEl('svg', { viewBox: `0 0 ${W} ${H}`, width: '100%', height: H, preserveAspectRatio: 'none', role: 'img' });
+  const labelEvery = Math.ceil(data.length / 8);
+  data.forEach((d, i) => {
+    const h = Math.max(1, ((d.value || 0) / max) * (H - pad * 2));
+    const x = pad + i * bw, y = H - pad - h;
+    const rect = svgEl('rect', { x: x + 1, y, width: Math.max(1, bw - 2), height: h, rx: 2, fill: color, opacity: 0.85 });
+    rect.appendChild(svgEl('title')).textContent = `${d.label}: ${d.display ?? d.value}`;
+    svg.appendChild(rect);
+    if (i % labelEvery === 0) {
+      const t = svgEl('text', { x: x + bw / 2, y: H - 6, 'text-anchor': 'middle', 'font-size': 9, fill: 'var(--muted)' });
+      t.textContent = String(d.label).slice(-5);
+      svg.appendChild(t);
+    }
+  });
+  return svg;
+}
+
+/** Sparkline line chart from an array of numbers. */
+export function sparkline(values, { height = 60, color } = {}) {
+  if (!values || values.length < 2) return empty('Not enough data');
+  const stroke = color || getComputedStyle(document.documentElement).getPropertyValue('--accent').trim() || '#8b5cf6';
+  const W = 600, H = height, pad = 4;
+  const max = Math.max(...values), min = Math.min(...values);
+  const range = max - min || 1;
+  const pts = values.map((v, i) => {
+    const x = pad + (i / (values.length - 1)) * (W - pad * 2);
+    const y = H - pad - ((v - min) / range) * (H - pad * 2);
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
+  }).join(' ');
+  const svg = svgEl('svg', { viewBox: `0 0 ${W} ${H}`, width: '100%', height: H, preserveAspectRatio: 'none' });
+  svg.appendChild(svgEl('polyline', { points: pts, fill: 'none', stroke, 'stroke-width': 2, 'stroke-linejoin': 'round' }));
+  return svg;
+}
+
 // Build a <select> from /api/models, preselecting `current`.
 import { models as fetchModels } from './api.js';
 export async function modelSelect(current, attrs = {}) {

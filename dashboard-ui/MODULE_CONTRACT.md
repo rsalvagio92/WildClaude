@@ -22,7 +22,7 @@ From `../api.js`:
 - `api.get(path)`, `api.post(path, body)`, `api.put(path, body)`, `api.patch(path, body)`, `api.del(path)` — all return parsed JSON, throw `ApiError {status, message}` on non-2xx.
 - `chatId()` → async, returns the owner chat id (use for endpoints needing `?chatId=`).
 - `models()` → async `{ models: [{id,alias,label,description}], default }`.
-- `downloadUrl(path)` → adds `?token=` for file downloads / anchor hrefs.
+- `ticketUrl(path)` → async; returns a URL authed by a short-lived signed ticket (use for downloads/streams; never put the raw token in a URL). `getTicket()` for the bare ticket.
 
 From `../ui.js`:
 - `el(spec, attrs, children)` — builder. `el('div.card.foo', {onclick, text, html, dataset, value, disabled, placeholder, ...}, [children])`. Event handlers via `onclick`/`oninput`/`onchange`/`onkeydown` (lowercased). `text` sets textContent (safe), `html` sets innerHTML (escape first!).
