@@ -416,6 +416,17 @@ function createSchema(database: Database.Database): void {
     );
     CREATE INDEX IF NOT EXISTS idx_buffered_chat ON buffered_messages(chat_id);
 
+    -- Generic data store for tracker-style dashboard widgets (fitness logs,
+    -- nutrition entries, etc.). One row per submitted entry; data column is JSON.
+    CREATE TABLE IF NOT EXISTS dashboard_data (
+      id           INTEGER PRIMARY KEY AUTOINCREMENT,
+      dashboard_id TEXT NOT NULL,
+      widget_id    TEXT NOT NULL,
+      data         TEXT NOT NULL DEFAULT '{}',
+      created_at   INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_dashboard_data ON dashboard_data(dashboard_id, widget_id, created_at DESC);
+
     CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
       summary,
       raw_text,
@@ -2456,6 +2467,27 @@ export function insertBufferedMessage(chatId: string, text: string): void {
 
 export function deleteBufferedMessages(chatId: string): void {
   getDb().prepare('DELETE FROM buffered_messages WHERE chat_id = ?').run(chatId);
+}
+
+// ── Dashboard tracker data ────────────────────────────────────────────
+
+export function insertDashboardData(dashboardId: string, widgetId: string, data: Record<string, unknown>): number {
+  const info = getDb().prepare('INSERT INTO dashboard_data (dashboard_id, widget_id, data, created_at) VALUES (?, ?, ?, ?)')
+    .run(dashboardId, widgetId, JSON.stringify(data || {}), Math.floor(Date.now() / 1000));
+  return Number(info.lastInsertRowid);
+}
+
+export function queryDashboardData(dashboardId: string, widgetId: string, sinceDays?: number): Array<{ id: number; data: Record<string, unknown>; created_at: number }> {
+  let sql = 'SELECT id, data, created_at FROM dashboard_data WHERE dashboard_id = ? AND widget_id = ?';
+  const params: unknown[] = [dashboardId, widgetId];
+  if (sinceDays && sinceDays > 0) { sql += ' AND created_at >= ?'; params.push(Math.floor(Date.now() / 1000) - sinceDays * 86400); }
+  sql += ' ORDER BY created_at ASC';
+  const rows = getDb().prepare(sql).all(...params) as Array<{ id: number; data: string; created_at: number }>;
+  return rows.map((r) => ({ id: r.id, created_at: r.created_at, data: (() => { try { return JSON.parse(r.data); } catch { return {}; } })() }));
+}
+
+export function deleteDashboardDataRow(id: number): void {
+  getDb().prepare('DELETE FROM dashboard_data WHERE id = ?').run(id);
 }
 
 /** Load all persisted buffered messages, oldest first, grouped by chat. */

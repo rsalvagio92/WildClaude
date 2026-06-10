@@ -790,7 +790,15 @@ export async function handleMessage(ctx: Context, message: string, forceVoiceRep
     const personalitySystemPrompt = generatePersonalityPrompt(loadPersonalityConfig());
     const { getCurrentMood } = await import('./moods.js');
     const moodInfo = getCurrentMood();
-    const appendedPrompt = [personalitySystemPrompt, moodInfo.snippet]
+    // If this chat has an active project, inject its reference block so the
+    // assistant works with full project context (repos, env, KB, secret availability).
+    let projectRef = '';
+    try {
+      const { getActiveProject, buildProjectReference } = await import('./projects.js');
+      const activeId = getActiveProject(String(chatId));
+      if (activeId) projectRef = buildProjectReference(activeId) || '';
+    } catch { /* projects optional */ }
+    const appendedPrompt = [personalitySystemPrompt, moodInfo.snippet, projectRef]
       .filter((s) => s && s.trim().length > 0)
       .join('\n\n');
 
@@ -1149,6 +1157,8 @@ export function createBot(): Bot {
     { command: 'respin', description: 'Reload recent context' },
     { command: 'voice', description: 'Toggle voice mode' },
     { command: 'dashboard', description: 'Open web dashboard' },
+    { command: 'dashboard_create', description: 'Generate a custom dashboard from a description' },
+    { command: 'project', description: 'Show or set the active project for this chat' },
     { command: 'status', description: 'Health check' },
     { command: 'lock', description: 'Lock session (PIN)' },
     { command: 'personality', description: 'Personality style — /personality [preset]' },
@@ -1489,6 +1499,62 @@ export function createBot(): Bot {
     const base = DASHBOARD_URL || `http://localhost:${DASHBOARD_PORT}`;
     const url = `${base}/?token=${DASHBOARD_TOKEN}&chatId=${chatIdStr}`;
     await ctx.reply(`<a href="${url}">Open Dashboard</a>`, { parse_mode: 'HTML' });
+  });
+
+  // /dashboard_create <description> — generate a custom dashboard from a prompt.
+  bot.command('dashboard_create', async (ctx) => {
+    if (!isAuthorised(ctx.chat!.id)) return;
+    if (await replyIfLocked(ctx)) return;
+    const prompt = ctx.match?.trim();
+    if (!prompt) {
+      await ctx.reply('Usage: /dashboard_create <what to track or monitor>\n\nExample: /dashboard_create crypto prices for BTC and ETH plus a table of the top 10 coins');
+      return;
+    }
+    await ctx.reply('Designing your dashboard…');
+    try {
+      const { generateDashboard } = await import('./dashboards-v2.js');
+      const res = await generateDashboard(prompt);
+      if (!res.ok || !res.spec) { await ctx.reply(`Could not build it: ${res.error || 'unknown error'}`); return; }
+      const base = DASHBOARD_URL || `http://localhost:${DASHBOARD_PORT}`;
+      const link = DASHBOARD_TOKEN
+        ? `\n\n<a href="${base}/?token=${DASHBOARD_TOKEN}#/builder?id=${res.spec.id}">Open it</a>`
+        : '';
+      await ctx.reply(`Created <b>${res.spec.icon || '📊'} ${res.spec.title}</b> with ${res.spec.widgets.length} widgets.${link}`, { parse_mode: 'HTML' });
+    } catch (e) {
+      await ctx.reply(`Dashboard generation failed: ${e instanceof Error ? e.message : 'error'}`);
+    }
+  });
+
+  // /project [use <id> | none] — show or set the active project for this chat.
+  // An active project injects its context (repos, env, KB, secret availability)
+  // into every message so the assistant works as a referral on that project.
+  bot.command('project', async (ctx) => {
+    if (!isAuthorised(ctx.chat!.id)) return;
+    const chatIdStr = ctx.chat!.id.toString();
+    const arg = ctx.match?.trim();
+    const { listProjects, getProject, getActiveProject, setActiveProject } = await import('./projects.js');
+
+    if (!arg) {
+      const activeId = getActiveProject(chatIdStr);
+      const active = activeId ? getProject(activeId) : null;
+      const all = listProjects();
+      const list = all.length ? all.map((p) => `${p.id === activeId ? '▶' : '·'} ${p.icon || '📦'} ${p.name} — <code>${p.id}</code>`).join('\n') : 'No projects yet. Create one in the dashboard → Projects.';
+      await ctx.reply(
+        `Active project: ${active ? `${active.icon || '📦'} ${active.name}` : 'none'}\n\n${list}\n\nUsage: /project use &lt;id&gt; · /project none`,
+        { parse_mode: 'HTML' },
+      );
+      return;
+    }
+    if (arg.toLowerCase() === 'none' || arg.toLowerCase() === 'clear') {
+      setActiveProject(chatIdStr, null);
+      await ctx.reply('Active project cleared.');
+      return;
+    }
+    const id = arg.replace(/^use\s+/i, '').trim();
+    const p = getProject(id);
+    if (!p) { await ctx.reply(`No project with id "${id}". Use /project to list them.`); return; }
+    setActiveProject(chatIdStr, p.id);
+    await ctx.reply(`Active project set to ${p.icon || '📦'} ${p.name}. I'll use its context for this chat.`);
   });
 
   // /stop — interrupt the current agent query

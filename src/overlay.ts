@@ -156,6 +156,8 @@ export interface UserConfig {
     pushback?: 'gentle' | 'normal' | 'assertive';
     customPrompt?: string;
   };
+  /** Active project container per chat id — injects project context into chat. */
+  activeProjects?: Record<string, string>;
 }
 
 export interface BotIdentity {

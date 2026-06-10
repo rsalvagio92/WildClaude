@@ -14,9 +14,12 @@ export const MODULES = [
   { id: 'workflows',  title: 'Workflows',           icon: '🔀', group: 'Agents' },
   { id: 'evals',      title: 'Evals',               icon: '✅', group: 'Agents' },
 
+  { id: 'projects',   title: 'Projects',            icon: '📦', group: 'Projects' },
+
+  { id: 'builder',    title: 'Dashboards',          icon: '📊', group: 'Ecosystem' },
   { id: 'ecosystem',  title: 'Skills & MCP',        icon: '🧩', group: 'Ecosystem' },
   { id: 'marketplace',title: 'Marketplace',         icon: '🛒', group: 'Ecosystem' },
-  { id: 'dashboards', title: 'External Dashboards', icon: '📊', group: 'Ecosystem' },
+  { id: 'dashboards', title: 'External Dashboards', icon: '🔌', group: 'Ecosystem' },
 
   { id: 'vitals',     title: 'System Vitals',       icon: '📈', group: 'Monitoring' },
   { id: 'traces',     title: 'Trace Inspector',     icon: '🔍', group: 'Monitoring' },
@@ -28,4 +31,4 @@ export const MODULES = [
   { id: 'settings',   title: 'Settings',            icon: '⚙️', group: 'System' },
 ];
 
-export const GROUP_ORDER = ['Chat', 'Knowledge', 'Agents', 'Ecosystem', 'Monitoring', 'System'];
+export const GROUP_ORDER = ['Chat', 'Projects', 'Knowledge', 'Agents', 'Ecosystem', 'Monitoring', 'System'];

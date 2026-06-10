@@ -68,6 +68,8 @@ ${instructions}
   });
 
   gitCommit(`feat(skill): create ${name} — ${description}`);
+  // Link into ~/.claude/skills so the model can actually auto-load it.
+  void import('./skill-sync.js').then((m) => m.syncSkill(name)).catch(() => {});
   logger.info({ name }, 'Skill created');
   return skillPath;
 }

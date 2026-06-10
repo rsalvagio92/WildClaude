@@ -114,6 +114,19 @@ input[type="range"] { width: 100%; accent-color: var(--accent); }
 .grid-3 { grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); }
 .grid-stat { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
 
+/* ── Declarative dashboard grid (12-col, widget tiles span columns) ── */
+.dash-grid { display: grid; grid-template-columns: repeat(12, 1fr); gap: 14px; }
+.dash-tile { grid-column: span 4; background: var(--bg-elev); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px 16px; min-width: 0; overflow: hidden; }
+.dash-tile h4 { color: var(--muted); text-transform: uppercase; letter-spacing: .04em; font-weight: 600; }
+.metric-big { font-size: 30px; font-weight: 700; line-height: 1.1; margin-top: 4px; }
+.feed-list, .clean-list { list-style: none; margin: 0; padding: 0; }
+.feed-list li, .clean-list li { padding: 6px 0; border-bottom: 1px solid var(--border); font-size: 13px; }
+.feed-list li:last-child, .clean-list li:last-child { border-bottom: 0; }
+.feed-list a { color: var(--accent); text-decoration: none; }
+.feed-list a:hover { text-decoration: underline; }
+.note-body { white-space: pre-wrap; font-size: 13px; color: var(--text); }
+@media (max-width: 760px) { .dash-grid { grid-template-columns: repeat(2, 1fr); } .dash-tile { grid-column: span 2 !important; } }
+
 .stat { background: var(--bg-elev); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px 16px; }
 .stat .v { font-size: 24px; font-weight: 700; }
 .stat .k { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; margin-top: 2px; }

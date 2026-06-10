@@ -78,6 +78,8 @@ import { USER_DATA_DIR } from './paths.js';
 import { loadUserConfig, saveUserConfig, writeOverlayFile } from './overlay.js';
 import { DEFAULT_AUTOMATIONS, syncAutomations } from './automations.js';
 import { registerExternalDashboardRoutes } from './external-dashboards.js';
+import { registerDashboardV2Routes } from './dashboards-v2.js';
+import { registerProjectRoutes } from './projects.js';
 import { registerHermesRoutes } from './dashboard-hermes.js';
 import { getTelegramConnected, getBotInfo, chatEvents, getIsProcessing, abortActiveQuery, ChatEvent } from './state.js';
 
@@ -1747,6 +1749,12 @@ export function startDashboard(botApi?: Api<RawApi>): void {
 
   // ── External service dashboards ────────────────────────────────────
   registerExternalDashboardRoutes(app);
+
+  // ── Declarative dashboard engine (specs, widgets, tracker data, LLM gen) ──
+  registerDashboardV2Routes(app);
+
+  // ── Project containers (metadata, KB, agent reference, active-project) ──
+  registerProjectRoutes(app);
 
   serve({ fetch: app.fetch, port: DASHBOARD_PORT, hostname: DASHBOARD_HOST }, () => {
     logger.info({ port: DASHBOARD_PORT, host: DASHBOARD_HOST }, 'Dashboard server running');

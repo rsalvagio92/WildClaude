@@ -202,6 +202,15 @@ async function main(): Promise<void> {
 
   cleanupOldUploads();
 
+  // Bridge WildClaude skills into ~/.claude/skills so the model auto-discovers
+  // them (they're created in USER_DATA_DIR/skills, which the CLI doesn't scan).
+  try {
+    const { syncAllSkills } = await import('./skill-sync.js');
+    syncAllSkills();
+  } catch (err) {
+    logger.warn({ err }, 'skill-sync at startup failed');
+  }
+
   // Create bot only if token is available (skip for dashboard-only mode)
   const bot = activeBotToken ? createBot() : null;
 

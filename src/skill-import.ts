@@ -160,6 +160,9 @@ export async function fetchSkill(ref: string): Promise<ImportResult> {
 export function writeSkill(skillPath: string, content: string): void {
   fs.mkdirSync(path.dirname(skillPath), { recursive: true });
   fs.writeFileSync(skillPath, content, 'utf8');
+  // Bridge into ~/.claude/skills so the model can auto-load it.
+  const name = path.basename(path.dirname(skillPath));
+  void import('./skill-sync.js').then((m) => m.syncSkill(name)).catch(() => {});
   logger.info({ skillPath, bytes: content.length }, 'Skill imported');
 }
 

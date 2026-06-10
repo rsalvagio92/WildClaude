@@ -30,9 +30,11 @@ function setActive(id) {
 }
 
 async function navigate() {
-  const id = (location.hash.replace(/^#\/?/, '') || MODULES[0].id).split('?')[0];
+  const raw = location.hash.replace(/^#\/?/, '') || MODULES[0].id;
+  const [id, queryStr] = raw.split('?');
   const meta = MODULES.find((m) => m.id === id);
   if (!meta) { location.hash = '#/' + MODULES[0].id; return; }
+  const params = Object.fromEntries(new URLSearchParams(queryStr || ''));
 
   // Tear down previous module.
   if (current && current.cleanup) { try { current.cleanup(); } catch {} }
@@ -44,7 +46,7 @@ async function navigate() {
     const mod = await import(`./modules/${id}.js`);
     const def = mod.default || mod;
     clear(container);
-    const cleanup = await def.mount(container, { meta });
+    const cleanup = await def.mount(container, { meta, ...params });
     current = { id, cleanup: typeof cleanup === 'function' ? cleanup : null };
   } catch (e) {
     console.error('Module load failed:', id, e);

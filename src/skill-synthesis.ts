@@ -353,6 +353,7 @@ export function promoteProposal(hash: string): { ok: boolean; skillPath?: string
   fs.copyFileSync(row.proposal_path, destFile);
   fs.unlinkSync(row.proposal_path);
   markAccepted(hash);
+  void import('./skill-sync.js').then((m) => m.syncSkill(row.proposed_name!)).catch(() => {});
   return { ok: true, skillPath: destFile };
 }
 
