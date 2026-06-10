@@ -29,7 +29,7 @@ import { DEFAULT_DASHBOARD_TEMPLATES } from './dashboard-templates.js';
 
 // ── Types ──────────────────────────────────────────────────────────────
 
-export type WidgetType = 'metric' | 'chart' | 'table' | 'list' | 'feed' | 'form' | 'note';
+export type WidgetType = 'metric' | 'chart' | 'table' | 'list' | 'feed' | 'form' | 'note' | 'gauge' | 'insight';
 
 export interface WidgetSource {
   kind: 'http' | 'rss' | 'local' | 'static';
@@ -42,12 +42,14 @@ export interface WidgetSource {
   limit?: number;
   // local
   field?: string;             // which field of each entry to aggregate/plot
-  agg?: 'sum' | 'avg' | 'count' | 'last' | 'list';
+  agg?: 'sum' | 'avg' | 'count' | 'last' | 'list' | 'streak' | 'delta';
   sinceDays?: number;
   groupByDay?: boolean;
   // static
   value?: unknown;
 }
+
+const WIDGET_TYPES: WidgetType[] = ['metric', 'chart', 'table', 'list', 'feed', 'form', 'note', 'gauge', 'insight'];
 
 export interface Widget {
   id: string;
@@ -108,7 +110,7 @@ export function normalizeSpec(raw: Partial<DashboardSpec>, opts: { id?: string; 
   const id = opts.id || slugify(raw.id || raw.title || 'dashboard') + '-' + now.toString(36).slice(-4);
   const widgets: Widget[] = (Array.isArray(raw.widgets) ? raw.widgets : []).slice(0, 30).map((w, i) => ({
     id: (w as Widget).id || `w${i}`,
-    type: (['metric', 'chart', 'table', 'list', 'feed', 'form', 'note'].includes((w as Widget).type) ? (w as Widget).type : 'note') as WidgetType,
+    type: (WIDGET_TYPES.includes((w as Widget).type) ? (w as Widget).type : 'note') as WidgetType,
     title: String((w as Widget).title || 'Widget').slice(0, 120),
     w: Math.min(12, Math.max(1, (w as Widget).w || 4)),
     source: (w as Widget).source,
@@ -223,6 +225,27 @@ export async function resolveWidget(dashboardId: string, widget: Widget): Promis
           // If a specific field is named, return that scalar; else the whole entry.
           return { ok: true, data: (field && lastRow) ? (lastRow as Record<string, unknown>)[field] ?? null : lastRow };
         }
+        case 'streak': {
+          // Consecutive days (ending today or yesterday) with at least one entry.
+          const days = new Set(rows.map((r) => new Date(r.created_at * 1000).toISOString().slice(0, 10)));
+          let streak = 0;
+          const cursor = new Date();
+          // Allow the streak to count from today or yesterday so a not-yet-logged today doesn't reset it.
+          if (!days.has(cursor.toISOString().slice(0, 10))) cursor.setUTCDate(cursor.getUTCDate() - 1);
+          while (days.has(cursor.toISOString().slice(0, 10))) { streak++; cursor.setUTCDate(cursor.getUTCDate() - 1); }
+          return { ok: true, data: streak };
+        }
+        case 'delta': {
+          // Current period vs the preceding equal-length period (sum of field).
+          const win = src.sinceDays || 7;
+          const cutoff = Math.floor(Date.now() / 1000) - win * 86400;
+          const allRows = queryDashboardData(dashboardId, readId); // unbounded, then split
+          const sumIn = (rs: typeof allRows) => rs.reduce((a, r) => a + (Number((r.data as Record<string, unknown>)[field || 'value']) || 0), 0);
+          const current = sumIn(allRows.filter((r) => r.created_at >= cutoff));
+          const prev = sumIn(allRows.filter((r) => r.created_at >= cutoff - win * 86400 && r.created_at < cutoff));
+          const changePct = prev === 0 ? null : ((current - prev) / Math.abs(prev)) * 100;
+          return { ok: true, data: { current, previous: prev, changePct } };
+        }
         default: return { ok: true, data: rows.map((r) => ({ ...r.data, _at: r.created_at, _id: r.id })) };
       }
     }
@@ -268,11 +291,87 @@ export function recordEntry(dashboardId: string, widgetId: string, values: Recor
   return insertDashboardData(dashboardId, widgetId, values);
 }
 
-// ── LLM generation ────────────────────────────────────────────────────────
+// ── LLM helpers ────────────────────────────────────────────────────────────
 
-const GEN_PROMPT = (request: string) => `You design dashboards for a personal AI assistant by emitting a JSON spec. Output ONLY the JSON object — no prose, no code fence.
+/** Robustly pull a JSON object/array out of model output (handles fences/prose). */
+function extractJson<T = unknown>(raw: string): T | null {
+  if (!raw) return null;
+  try { return JSON.parse(raw) as T; } catch { /* */ }
+  const fence = raw.match(/```(?:json)?\s*([\s\S]*?)```/);
+  if (fence) { try { return JSON.parse(fence[1]) as T; } catch { /* */ } }
+  // Balance from the first opening brace/bracket.
+  const start = raw.search(/[{[]/);
+  if (start >= 0) {
+    const open = raw[start];
+    const close = open === '{' ? '}' : ']';
+    const end = raw.lastIndexOf(close);
+    if (end > start) { try { return JSON.parse(raw.slice(start, end + 1)) as T; } catch { /* */ } }
+  }
+  return null;
+}
+
+async function ask(prompt: string, model: string): Promise<string> {
+  const { runAgent } = await import('./agent.js');
+  const result = await runAgent(prompt, undefined, () => {}, undefined, model);
+  return result.text || '';
+}
+
+// ── Clarifying-questions planner ──────────────────────────────────────────
+//
+// Before generating, we ask the model to (a) understand the request, (b) propose
+// the widgets it would build, and (c) surface a few high-leverage questions so
+// the user shapes the result. The frontend renders these; answers feed generation.
+
+export interface DashboardPlan {
+  title: string;
+  icon: string;
+  summary: string;
+  recommendedWidgets: string[];
+  questions: Array<{ id: string; question: string; type: 'choice' | 'multi' | 'text'; options?: string[]; default?: string }>;
+}
+
+const PLAN_PROMPT = (request: string) => `A user wants a personal dashboard: "${request}".
+
+Think about what would make this dashboard genuinely useful and delightful, then output ONLY a JSON object (no prose, no fence):
+{
+  "title": "concise dashboard name",
+  "icon": "one relevant emoji",
+  "summary": "one sentence describing what you'd build",
+  "recommendedWidgets": ["short phrase per widget you'd include — favour charts, trends, gauges, streaks and at-a-glance metrics over plain tables"],
+  "questions": [
+    // 2-4 high-leverage questions that meaningfully change the design. Prefer "choice"/"multi" with concrete options.
+    { "id": "kebab", "question": "…?", "type": "choice", "options": ["A","B"], "default": "A" }
+  ]
+}
+
+Guidance for questions: ask about units/currency, time range, whether to track a goal/target, which metrics matter most, data they'd log manually vs. pull from APIs, refresh cadence. Keep them concrete and answerable in one tap.`;
+
+export async function planDashboard(request: string): Promise<{ ok: boolean; plan?: DashboardPlan; error?: string }> {
+  try {
+    const { MODELS } = await import('./models.js');
+    const raw = await ask(PLAN_PROMPT(request), MODELS.sonnet);
+    const plan = extractJson<DashboardPlan>(raw);
+    if (!plan || !Array.isArray(plan.questions)) return { ok: false, error: 'Could not produce a plan.' };
+    // Bound it.
+    plan.questions = plan.questions.slice(0, 4).map((q, i) => ({
+      id: q.id || `q${i}`, question: String(q.question || '').slice(0, 200),
+      type: (['choice', 'multi', 'text'].includes(q.type) ? q.type : 'text'),
+      options: Array.isArray(q.options) ? q.options.slice(0, 6).map((o) => String(o).slice(0, 60)) : undefined,
+      default: q.default ? String(q.default).slice(0, 60) : undefined,
+    }));
+    plan.recommendedWidgets = (Array.isArray(plan.recommendedWidgets) ? plan.recommendedWidgets : []).slice(0, 10).map((w) => String(w).slice(0, 120));
+    return { ok: true, plan };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : 'plan failed' };
+  }
+}
+
+// ── Spec generation ────────────────────────────────────────────────────────
+
+const GEN_PROMPT = (request: string, answers?: Record<string, string>) => `You design rich, visual dashboards for a personal AI assistant by emitting a JSON spec. Output ONLY the JSON object — no prose, no code fence.
 
 User request: "${request}"
+${answers && Object.keys(answers).length ? `\nThe user answered these design questions — honour them:\n${Object.entries(answers).map(([k, v]) => `- ${k}: ${v}`).join('\n')}` : ''}
 
 Schema:
 {
@@ -282,46 +381,104 @@ Schema:
   "widgets": [
     {
       "id": "kebab-id",
-      "type": "metric" | "chart" | "table" | "list" | "feed" | "form" | "note",
+      "type": "metric" | "chart" | "table" | "list" | "feed" | "form" | "note" | "gauge" | "insight",
       "title": "string",
-      "w": 1-12,                      // grid columns; metrics ~3, charts/tables ~8-12
-      "source": {                     // omit for note/form
+      "w": 1-12,                      // grid columns; metrics/gauges ~3-4, charts/tables ~8-12
+      "source": {                     // omit for note; form has source {"kind":"local"}
         "kind": "http" | "rss" | "local" | "static",
-        // http: { "url": "https://...", "jsonPath": "a.b.0.c", "headers": {"Authorization":"Bearer {{SECRET_NAME}}"} }
-        // rss:  { "url": "https://...", "limit": 12 }
-        // local:{ "field": "weight", "agg": "last"|"sum"|"avg"|"count"|"list", "groupByDay": true, "sinceDays": 30 }
+        // http:  { "url": "https://...", "jsonPath": "a.b.0.c", "headers": {"Authorization":"Bearer {{SECRET_NAME}}"} }
+        // rss:   { "url": "https://...", "limit": 12 }
+        // local: { "field":"weight", "agg":"last|sum|avg|count|list|streak|delta", "groupByDay":true, "sinceDays":30, "readWidget":"<form-widget-id>" }
         // static:{ "value": ... }
       },
-      "config": { ... }               // metric: {unit,format}; chart:{kind:"bar"|"line",x,y}; table:{columns:[...]}; form:{fields:[{name,label,type}]}; note:{markdown}
+      "config": { ... }
+      // metric: {unit, format:"currency"|"percent"|"compact"|"number", decimals, readWidget}
+      // gauge:  {target:<number>, unit, readWidget}   ← progress toward a goal (use with agg sum/last/count)
+      // chart:  {kind:"bar"|"line", x:"day", y:"value", readWidget}
+      // table:  {columns:[{key,label,format}], readWidget}
+      // form:   {fields:[{name,label,type:"number"|"text"}], submitLabel}
+      // insight:{readWidget, field}   ← an on-demand AI summary of the logged data (no source needed)
+      // note:   {markdown}
     }
   ]
 }
 
-Rules:
-- Use PUBLIC, key-less https APIs where possible (e.g. CoinGecko, Frankfurter FX, public RSS). Only use {{SECRET_NAME}} placeholders when an API key is unavoidable, and name the secret clearly.
-- For trackers (fitness, nutrition, habits, expenses), pair a "form" widget (writes via kind:local) with "chart"/"metric"/"table" widgets reading kind:local with the same field names.
-- 3–8 widgets. Concrete, working sources — not placeholders. Sensible w values that tile a 12-col grid.
-- Real, current API URLs you are confident exist. If unsure of an exact endpoint, prefer a note widget explaining what to wire up rather than a broken URL.`;
+Design rules — make it feel premium, not a spreadsheet:
+- LEAD WITH VISUALS: prefer charts (line for trends, bar for comparisons), gauges for goals, and big metrics with deltas over plain tables. Every tracker dashboard should have at least one chart and one gauge or delta metric.
+- For manual trackers (fitness, nutrition, habits, mood, expenses, reading): include ONE "form" widget (kind:local) whose field names are reused by reader widgets via "readWidget":"<that form's id>". Add a "metric" with agg:"delta" (shows ▲/▼ vs previous period), a "chart" with groupByDay over 30 days, and where a goal makes sense a "gauge" with a target. For daily-habit trackers add a "streak" metric (agg:"streak"). Add ONE "insight" widget so the user gets an AI read on their data.
+- Use PUBLIC key-less https APIs where possible (CoinGecko, Frankfurter FX, open RSS). Only use {{SECRET_NAME}} when a key is unavoidable; name it clearly.
+- 4–8 widgets. Concrete, working sources — never placeholders. Sensible w values that tile a 12-col grid (rows should add up to ~12).
+- Real, current API URLs you're confident exist; if unsure, use a "note" widget explaining what to wire up rather than a broken URL.`;
 
-export async function generateDashboard(request: string, opts: { projectId?: string } = {}): Promise<{ ok: boolean; spec?: DashboardSpec; error?: string }> {
+export async function generateDashboard(request: string, opts: { projectId?: string; answers?: Record<string, string> } = {}): Promise<{ ok: boolean; spec?: DashboardSpec; error?: string }> {
   try {
-    const { runAgent } = await import('./agent.js');
     const { MODELS } = await import('./models.js');
-    const result = await runAgent(GEN_PROMPT(request), undefined, () => {}, undefined, MODELS.opus);
-    const raw = result.text || '';
-    let parsed: Partial<DashboardSpec> | null = null;
-    try { parsed = JSON.parse(raw); } catch {
-      const fence = raw.match(/```(?:json)?\s*([\s\S]*?)```/);
-      const start = raw.indexOf('{');
-      const candidate = fence?.[1] || (start >= 0 ? raw.slice(start, raw.lastIndexOf('}') + 1) : '');
-      try { parsed = JSON.parse(candidate); } catch { /* */ }
-    }
+    const raw = await ask(GEN_PROMPT(request, opts.answers), MODELS.opus);
+    const parsed = extractJson<Partial<DashboardSpec>>(raw);
     if (!parsed || !Array.isArray(parsed.widgets)) return { ok: false, error: 'Could not parse a dashboard spec from the model output.' };
     const spec = saveDashboard(normalizeSpec(parsed, { projectId: opts.projectId }));
     logger.info({ id: spec.id, widgets: spec.widgets.length }, 'dashboard generated');
     return { ok: true, spec };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : 'generation failed' };
+  }
+}
+
+// ── Voice / natural-language entry parsing ─────────────────────────────────
+//
+// A tracker form widget can be filled by speaking. The browser transcribes via
+// the Web Speech API; we map that free text onto the widget's fields with Haiku.
+
+export async function parseEntry(dashboardId: string, widgetId: string, transcript: string): Promise<{ ok: boolean; values?: Record<string, unknown>; error?: string }> {
+  const spec = getDashboard(dashboardId);
+  if (!spec) return { ok: false, error: 'No such dashboard' };
+  const widget = spec.widgets.find((w) => w.id === widgetId);
+  const fields = (widget?.config?.fields as Array<{ name: string; label?: string; type?: string }>) || [];
+  if (!fields.length) return { ok: false, error: 'Widget has no fields to fill' };
+  try {
+    const { MODELS } = await import('./models.js');
+    const prompt = `Extract structured values from a spoken log entry. Output ONLY a JSON object mapping field names to values.
+
+Fields (name : type : label):
+${fields.map((f) => `- ${f.name} : ${f.type || 'text'} : ${f.label || f.name}`).join('\n')}
+
+Spoken entry: "${transcript.slice(0, 400)}"
+
+Rules: numbers as numbers (strip units like "kg","cal","minutes"); omit fields not mentioned; never invent values. Example output: {"weight":80,"sleep":7.5}`;
+    const raw = await ask(prompt, MODELS.haiku);
+    const obj = extractJson<Record<string, unknown>>(raw) || {};
+    // Coerce by declared type and drop unknown keys.
+    const values: Record<string, unknown> = {};
+    for (const f of fields) {
+      if (!(f.name in obj)) continue;
+      values[f.name] = f.type === 'number' ? Number(obj[f.name]) : obj[f.name];
+    }
+    return { ok: true, values };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : 'parse failed' };
+  }
+}
+
+// ── On-demand AI insight over a widget's logged data ───────────────────────
+
+export async function generateInsight(dashboardId: string, widgetId: string): Promise<{ ok: boolean; text?: string; error?: string }> {
+  const spec = getDashboard(dashboardId);
+  if (!spec) return { ok: false, error: 'No such dashboard' };
+  const widget = spec.widgets.find((w) => w.id === widgetId);
+  if (!widget) return { ok: false, error: 'No such widget' };
+  const readId = (widget.config?.readWidget as string) || widget.id;
+  const rows = queryDashboardData(dashboardId, readId, 60);
+  if (!rows.length) return { ok: true, text: 'No data logged yet — start logging and I’ll surface trends here.' };
+  try {
+    const { MODELS } = await import('./models.js');
+    const sample = rows.slice(-40).map((r) => ({ at: new Date(r.created_at * 1000).toISOString().slice(0, 10), ...r.data }));
+    const prompt = `You are a concise personal-analytics coach. Given these logged entries for "${spec.title} → ${widget.title}", write 2-3 short sentences of genuinely useful insight: trends, averages, streaks, anomalies, and one actionable nudge. No preamble, no markdown headers.
+
+Data (JSON): ${JSON.stringify(sample)}`;
+    const text = (await ask(prompt, MODELS.haiku)).trim();
+    return { ok: true, text: text.slice(0, 800) };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : 'insight failed' };
   }
 }
 
@@ -339,16 +496,24 @@ export function registerDashboardV2Routes(app: Hono): void {
 
   app.get('/api/dash/templates', (c) => c.json({ templates: listTemplates() }));
 
-  // Create: from a template ({templateId}), a prompt ({prompt}), or a raw spec.
+  // Step 1 of the guided flow: analyse the request → recommended widgets + clarifying questions.
+  app.post('/api/dash/plan', async (c) => {
+    const body = await c.req.json().catch(() => ({})) as { prompt?: string };
+    if (!body.prompt) return c.json({ error: 'prompt required' }, 400);
+    const res = await planDashboard(body.prompt);
+    return res.ok ? c.json({ plan: res.plan }) : c.json({ error: res.error }, 422);
+  });
+
+  // Create: from a template ({templateId}), a prompt (+ optional answers), or a raw spec.
   app.post('/api/dash', async (c) => {
-    const body = await c.req.json().catch(() => ({})) as { templateId?: string; prompt?: string; spec?: Partial<DashboardSpec>; projectId?: string };
+    const body = await c.req.json().catch(() => ({})) as { templateId?: string; prompt?: string; answers?: Record<string, string>; spec?: Partial<DashboardSpec>; projectId?: string };
     if (body.templateId) {
       const spec = instantiateTemplate(body.templateId, { projectId: body.projectId });
       if (!spec) return c.json({ error: 'Unknown template' }, 404);
       return c.json({ dashboard: spec }, 201);
     }
     if (body.prompt) {
-      const res = await generateDashboard(body.prompt, { projectId: body.projectId });
+      const res = await generateDashboard(body.prompt, { projectId: body.projectId, answers: body.answers });
       if (!res.ok) return c.json({ error: res.error }, 422);
       return c.json({ dashboard: res.spec }, 201);
     }
@@ -393,6 +558,20 @@ export function registerDashboardV2Routes(app: Hono): void {
     if (!body.widgetId || !body.values) return c.json({ error: 'widgetId and values required' }, 400);
     const rowId = recordEntry(spec.id, body.widgetId, body.values);
     return c.json({ ok: true, id: rowId }, 201);
+  });
+
+  // Voice/NL → structured field values for a form widget (browser transcribes, we map).
+  app.post('/api/dash/:id/parse-entry', async (c) => {
+    const body = await c.req.json().catch(() => ({})) as { widgetId?: string; transcript?: string };
+    if (!body.widgetId || !body.transcript) return c.json({ error: 'widgetId and transcript required' }, 400);
+    const res = await parseEntry(c.req.param('id'), body.widgetId, body.transcript);
+    return res.ok ? c.json({ values: res.values }) : c.json({ error: res.error }, 422);
+  });
+
+  // On-demand AI insight over a widget's logged data.
+  app.post('/api/dash/:id/insight/:wid', async (c) => {
+    const res = await generateInsight(c.req.param('id'), c.req.param('wid'));
+    return res.ok ? c.json({ text: res.text }) : c.json({ error: res.error }, 422);
   });
 
   // Generate a spec from a chat prompt without persisting attachment to a project.

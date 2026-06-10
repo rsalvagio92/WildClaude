@@ -125,7 +125,33 @@ input[type="range"] { width: 100%; accent-color: var(--accent); }
 .feed-list a { color: var(--accent); text-decoration: none; }
 .feed-list a:hover { text-decoration: underline; }
 .note-body { white-space: pre-wrap; font-size: 13px; color: var(--text); }
+.metric-mid { font-size: 22px; font-weight: 700; }
 @media (max-width: 760px) { .dash-grid { grid-template-columns: repeat(2, 1fr); } .dash-tile { grid-column: span 2 !important; } }
+
+/* Delta pill on metric widgets */
+.delta { display: inline-block; margin-top: 6px; font-size: 12px; font-weight: 600; padding: 2px 8px; border-radius: 999px; }
+.delta.up { color: #34d399; background: rgba(52, 211, 153, .12); }
+.delta.down { color: #f87171; background: rgba(248, 113, 113, .12); }
+.delta.flat { color: var(--muted); background: rgba(148, 163, 184, .12); }
+
+/* Gauge / progress toward a goal */
+.gauge-head { display: flex; align-items: baseline; gap: 4px; margin: 2px 0 8px; }
+.gauge-track { height: 10px; border-radius: 999px; background: rgba(148, 163, 184, .18); overflow: hidden; }
+.gauge-fill { height: 100%; border-radius: 999px; background: linear-gradient(90deg, var(--accent), #34d399); transition: width .4s ease; }
+
+/* Insight card */
+.insight-body { font-size: 13px; line-height: 1.5; min-height: 20px; }
+.insight-body p { margin: 0; }
+
+/* Chips (recommended widgets + multi-select questions) */
+.chip-row { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip { font-size: 12px; padding: 4px 10px; border-radius: 999px; border: 1px solid var(--border); background: var(--bg-elev); color: var(--text); cursor: pointer; }
+.chip.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+.chip.static { cursor: default; background: rgba(139, 92, 246, .1); border-color: rgba(139, 92, 246, .3); }
+
+/* Voice record button pulsing state */
+.btn.rec { color: #f87171; border-color: #f87171; animation: recpulse 1.1s ease-in-out infinite; }
+@keyframes recpulse { 0%,100% { opacity: 1; } 50% { opacity: .55; } }
 
 .stat { background: var(--bg-elev); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px 16px; }
 .stat .v { font-size: 24px; font-weight: 700; }

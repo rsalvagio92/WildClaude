@@ -71,40 +71,94 @@ function dashCard(d, root, refresh) {
 
 // ── Create flows ──────────────────────────────────────────────────────
 
-function openGenerate(refresh) {
-  const promptIn = el('textarea', {
-    rows: 4, style: 'width:100%',
-    placeholder: 'e.g. "A crypto dashboard with BTC/ETH prices and a table of the top 10 coins" or "A reading tracker where I log books and see pages-per-week"',
-  });
-  const m = modal({
-    title: '✨ Describe a dashboard',
-    wide: true,
-    body: [
-      el('p.muted', { text: 'Tell WildClaude what you want to track or monitor. It will design the widgets and wire public data sources.' }),
+// Two-step guided creation: describe → review recommended widgets & answer a
+// few clarifying questions → generate. `opts.projectId` scopes it to a project.
+export function openGenerate(refresh, opts = {}) {
+  const m = modal({ title: '✨ Describe a dashboard', wide: true, body: el('div'), footer: el('div') });
+  const body = m.box.querySelector('.modal-body');
+  const foot = m.box.querySelector('.modal-foot');
+  stepDescribe();
+
+  function stepDescribe(prefill) {
+    const promptIn = el('textarea', {
+      rows: 4, style: 'width:100%', value: prefill || '',
+      placeholder: 'e.g. "Track my sleep, weight and mood with trends and a goal" or "Crypto dashboard: BTC/ETH prices + top-10 table"',
+    });
+    mount(body, [
+      el('p.muted', { text: 'Tell WildClaude what you want to track or monitor. Next, it’ll recommend features and ask a couple of quick questions before building.' }),
       el('div.field', {}, [el('label', { text: 'What should this dashboard show?' }), promptIn]),
-    ],
-    footer: [
+    ]);
+    mount(foot, [
       el('button.btn', { text: 'Cancel', onclick: () => m.close() }),
       el('button.btn.btn-accent', {
-        text: 'Generate',
+        text: 'Next →',
         onclick: async (ev) => {
           const prompt = promptIn.value.trim();
           if (!prompt) { toastErr('Describe what you want first'); return; }
-          const btn = ev.target;
-          btn.disabled = true; btn.textContent = 'Designing…';
+          ev.target.disabled = true; ev.target.textContent = 'Thinking…';
           try {
-            const { dashboard } = await api.post('/api/dash', { prompt });
-            toastOk(`Created "${dashboard.title}" with ${dashboard.widgets.length} widgets`);
-            m.close();
-            refresh && refresh();
+            const { plan } = await api.post('/api/dash/plan', { prompt });
+            stepReview(prompt, plan);
           } catch (e) {
-            toastErr(e.message);
-            btn.disabled = false; btn.textContent = 'Generate';
+            toastErr(e.message); ev.target.disabled = false; ev.target.textContent = 'Next →';
           }
         },
       }),
-    ],
-  });
+    ]);
+    promptIn.focus();
+  }
+
+  function stepReview(prompt, plan) {
+    m.box.querySelector('.modal-head h3').textContent = `${plan.icon || '✨'} ${plan.title || 'Dashboard'}`;
+    const answers = {};
+    const qNodes = (plan.questions || []).map((q) => {
+      const wrap = el('div.field', {}, [el('label', { text: q.question })]);
+      if (q.type === 'choice' && q.options) {
+        const sel = el('select', { onchange: (e) => { answers[q.question] = e.target.value; } }, q.options.map((o) => {
+          const opt = el('option', { value: o, text: o }); if (o === q.default) opt.selected = true; return opt;
+        }));
+        answers[q.question] = q.default || q.options[0];
+        wrap.appendChild(sel);
+      } else if (q.type === 'multi' && q.options) {
+        const chips = el('div.chip-row');
+        const picked = new Set();
+        q.options.forEach((o) => chips.appendChild(el('button.chip', {
+          text: o, type: 'button',
+          onclick: (e) => { e.target.classList.toggle('on'); picked.has(o) ? picked.delete(o) : picked.add(o); answers[q.question] = [...picked].join(', '); },
+        })));
+        wrap.appendChild(chips);
+      } else {
+        const inp = el('input', { type: 'text', placeholder: q.default || '', oninput: (e) => { answers[q.question] = e.target.value; } });
+        wrap.appendChild(inp);
+      }
+      return wrap;
+    });
+
+    mount(body, [
+      plan.summary ? el('p.muted', { text: plan.summary }) : null,
+      (plan.recommendedWidgets && plan.recommendedWidgets.length) ? el('div', {}, [
+        el('label', { text: 'Recommended widgets' }),
+        el('div.chip-row', { style: 'margin-bottom:10px' }, plan.recommendedWidgets.map((w) => el('span.chip.static', { text: w }))),
+      ]) : null,
+      qNodes.length ? el('label', { text: 'A couple of quick questions' }) : el('p.muted', { text: 'No questions — ready to build.' }),
+      ...qNodes,
+    ]);
+    mount(foot, [
+      el('button.btn', { text: '← Back', onclick: () => { m.box.querySelector('.modal-head h3').textContent = '✨ Describe a dashboard'; stepDescribe(prompt); } }),
+      el('button.btn.btn-accent', {
+        text: '✨ Build it',
+        onclick: async (ev) => {
+          ev.target.disabled = true; ev.target.textContent = 'Designing…';
+          try {
+            const { dashboard } = await api.post('/api/dash', { prompt, answers, projectId: opts.projectId });
+            toastOk(`Created "${dashboard.title}" with ${dashboard.widgets.length} widgets`);
+            m.close();
+            refresh && refresh();
+          } catch (e) { toastErr(e.message); ev.target.disabled = false; ev.target.textContent = '✨ Build it'; }
+        },
+      }),
+    ]);
+  }
 }
 
 function openTemplates(refresh) {
@@ -168,9 +222,10 @@ function widgetTile(dashId, w) {
   const bodyBox = el('div', { style: 'margin-top:8px' });
   mount(tile, head, bodyBox);
 
-  // Forms render locally (no resolve); note widgets render their markdown.
+  // Forms render locally (no resolve); notes render markdown; insights are on-demand.
   if (w.type === 'form') { mount(bodyBox, formWidget(dashId, w)); return tile; }
   if (w.type === 'note') { mount(bodyBox, noteWidget(w)); return tile; }
+  if (w.type === 'insight') { mount(bodyBox, insightWidget(dashId, w)); return tile; }
 
   // Data widgets resolve server-side.
   mount(bodyBox, loading('…'));
@@ -189,9 +244,10 @@ function widgetTile(dashId, w) {
 
 // ── Widget renderers by type ───────────────────────────────────────────
 
-function renderWidget(w, data) {
+function renderWidget(w, data, ctx) {
   switch (w.type) {
     case 'metric': return metricWidget(w, data);
+    case 'gauge': return gaugeWidget(w, data);
     case 'chart': return chartWidget(w, data);
     case 'table': return tableWidget(w, data);
     case 'list': return listWidget(w, data);
@@ -212,10 +268,52 @@ function fmtNumber(v, cfg = {}) {
 
 function metricWidget(w, data) {
   const cfg = w.config || {};
-  // 'last' aggregation may return an object — pick the configured field.
+  // Delta aggregation: { current, previous, changePct } → value + ▲/▼ pill.
+  if (data && typeof data === 'object' && !Array.isArray(data) && 'changePct' in data) {
+    const pct = data.changePct;
+    const up = pct != null && pct >= 0;
+    const pill = pct == null
+      ? el('span.delta.flat', { text: 'new' })
+      : el('span.delta' + (up ? '.up' : '.down'), { text: `${up ? '▲' : '▼'} ${Math.abs(pct).toFixed(1)}%` });
+    return el('div', {}, [el('div.metric-big', { text: fmtNumber(data.current, cfg) }), pill]);
+  }
   let val = data;
   if (val && typeof val === 'object' && !Array.isArray(val)) val = val[cfg.field] ?? val.value ?? Object.values(val)[0];
   return el('div.metric-big', { text: fmtNumber(val, cfg) });
+}
+
+function gaugeWidget(w, data) {
+  const cfg = w.config || {};
+  const target = Number(cfg.target) || 0;
+  let val = data;
+  if (val && typeof val === 'object' && !Array.isArray(val)) val = val.current ?? val[cfg.field] ?? val.value ?? Object.values(val)[0];
+  val = Number(val) || 0;
+  const pct = target > 0 ? Math.min(100, Math.max(0, (val / target) * 100)) : 0;
+  const bar = el('div.gauge-track', {}, [el('div.gauge-fill', { style: `width:${pct}%` })]);
+  return el('div', {}, [
+    el('div.gauge-head', {}, [
+      el('span.metric-mid', { text: fmtNumber(val, cfg) }),
+      el('span.muted', { text: target ? ` / ${fmtNumber(target, cfg)}` : '', style: 'font-size:13px' }),
+    ]),
+    bar,
+    el('span.muted', { text: target ? `${pct.toFixed(0)}% of goal` : 'Set a target', style: 'font-size:11px' }),
+  ]);
+}
+
+// Insight widget: on-demand AI read of the logged data.
+function insightWidget(dashId, w) {
+  const out = el('div.insight-body', {});
+  const gen = el('button.btn.btn-sm.btn-accent', {
+    text: '✨ Generate insight',
+    onclick: async () => {
+      mount(out, loading('Analysing…'));
+      try {
+        const { text } = await api.post(`/api/dash/${encodeURIComponent(dashId)}/insight/${encodeURIComponent(w.id)}`, {});
+        mount(out, el('p', { text: text || 'No insight available.' }));
+      } catch (e) { mount(out, errbox(e.message)); }
+    },
+  });
+  return el('div', {}, [out, el('div.btn-row', { style: 'margin-top:8px' }, [gen])]);
 }
 
 function chartWidget(w, data) {
@@ -279,22 +377,57 @@ function formWidget(dashId, w) {
     inputs[f.name] = input;
     return el('div.field', {}, [el('label', { text: f.label || f.name }), input]);
   });
+
+  const fill = (values) => { for (const f of fields) if (values && f.name in values && values[f.name] != null) inputs[f.name].value = values[f.name]; };
   const submit = el('button.btn.btn-sm.btn-accent', {
     text: (w.config && w.config.submitLabel) || 'Save',
     onclick: async () => {
       const values = {};
       for (const f of fields) {
         const raw = inputs[f.name].value;
+        if (raw === '') continue;
         values[f.name] = f.type === 'number' ? Number(raw) : raw;
       }
       try {
         await api.post(`/api/dash/${encodeURIComponent(dashId)}/data`, { widgetId: w.id, values });
-        toastOk('Saved');
+        toastOk('Logged');
         for (const f of fields) inputs[f.name].value = '';
       } catch (e) { toastErr(e.message); }
     },
   });
-  return el('div', {}, [...rows, el('div.btn-row', { style: 'margin-top:6px' }, [submit])]);
+
+  const btnRow = el('div.btn-row', { style: 'margin-top:6px' }, [submit, voiceButton(dashId, w, fill)]);
+  return el('div', {}, [...rows, btnRow]);
+}
+
+// 🎤 Speak an entry — browser transcribes (Web Speech API), backend maps the
+// free text onto this form's fields (Haiku), and we prefill the inputs.
+function voiceButton(dashId, w, fill) {
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SR) return null; // unsupported browser — silently omit
+  let listening = false;
+  const btn = el('button.btn.btn-sm', { title: 'Speak an entry', text: '🎤 Speak' });
+  btn.onclick = () => {
+    if (listening) return;
+    const rec = new SR();
+    rec.lang = navigator.language || 'en-US';
+    rec.interimResults = false;
+    rec.maxAlternatives = 1;
+    listening = true; btn.textContent = '● Listening…'; btn.classList.add('rec');
+    rec.onresult = async (ev) => {
+      const transcript = ev.results[0][0].transcript;
+      btn.textContent = '… mapping';
+      try {
+        const { values } = await api.post(`/api/dash/${encodeURIComponent(dashId)}/parse-entry`, { widgetId: w.id, transcript });
+        fill(values);
+        toastOk(`Heard: "${transcript}"`);
+      } catch (e) { toastErr(e.message); }
+    };
+    rec.onerror = (ev) => { toastErr('Voice error: ' + (ev.error || 'unknown')); };
+    rec.onend = () => { listening = false; btn.textContent = '🎤 Speak'; btn.classList.remove('rec'); };
+    try { rec.start(); } catch { listening = false; btn.textContent = '🎤 Speak'; btn.classList.remove('rec'); }
+  };
+  return btn;
 }
 
 function safeStringify(data) {

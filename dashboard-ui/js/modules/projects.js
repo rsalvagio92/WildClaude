@@ -8,6 +8,7 @@ import {
   el, mount, clear, escapeHtml, badge, card, empty, loading, errbox,
   modal, confirmDialog, toastOk, toastErr, action, fmtTime, truncate,
 } from '../ui.js';
+import { openGenerate } from './builder.js';
 
 export default {
   async mount(view, params) {
@@ -218,7 +219,7 @@ function dashboardsCard(p) {
   const box = el('div');
   const listBox = el('div');
   mount(box, listBox, el('div.btn-row', { style: 'margin-top:10px' }, [
-    el('button.btn.btn-sm.btn-accent', { text: '✨ Describe a dashboard', onclick: () => generateScoped(p.id, () => loadList()) }),
+    el('button.btn.btn-sm.btn-accent', { text: '✨ Describe a dashboard', onclick: () => openGenerate(() => loadList(), { projectId: p.id }) }),
     el('button.btn.btn-sm', { text: '+ From template', onclick: () => templateScoped(p.id, () => loadList()) }),
   ]));
 
@@ -234,30 +235,6 @@ function dashboardsCard(p) {
   };
   loadList();
   return card('Dashboards', [box]);
-}
-
-function generateScoped(projectId, refresh) {
-  const promptIn = el('textarea', { rows: 4, style: 'width:100%', placeholder: 'e.g. "Deploy health: latest CI status, error rate, and recent releases"' });
-  const m = modal({
-    title: '✨ Describe a project dashboard',
-    wide: true,
-    body: [el('p.muted', { text: 'Scoped to this project. Public data sources are wired automatically.' }), el('div.field', {}, [el('label', { text: 'What should it show?' }), promptIn])],
-    footer: [
-      el('button.btn', { text: 'Cancel', onclick: () => m.close() }),
-      el('button.btn.btn-accent', {
-        text: 'Generate',
-        onclick: async (ev) => {
-          const prompt = promptIn.value.trim();
-          if (!prompt) { toastErr('Describe it first'); return; }
-          ev.target.disabled = true; ev.target.textContent = 'Designing…';
-          try {
-            await api.post('/api/dash', { prompt, projectId });
-            toastOk('Dashboard created'); m.close(); refresh && refresh();
-          } catch (e) { toastErr(e.message); ev.target.disabled = false; ev.target.textContent = 'Generate'; }
-        },
-      }),
-    ],
-  });
 }
 
 function templateScoped(projectId, refresh) {
