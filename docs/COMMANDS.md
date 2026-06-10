@@ -157,6 +157,16 @@ Log entries from `/evening` and `/journal` are prepended to `life/me/_kernel/log
 4. **Weighted context injection** — Before each message, relevant memories are retrieved and ranked by `importance × salience`. FTS5 keyword search is used for memories and for consolidation insights. Agent-specific filtering prevents one agent's memories from polluting another's context.
 5. **Zero-loss architecture** — Daily SQLite backup (`~/.wild-claude-pi/store/backups/`), integrity check on every decay sweep, conversation log archived before pruning, `/reflect` delete is soft-delete (recoverable). Messaging data retained 30 days (up from 3).
 
+## Projects
+
+| Command | Description |
+|---------|-------------|
+| `/project` | Show the active project for this chat |
+| `/project use <id>` | Set the active project — its repos, environment notes, knowledge base, and secret availability are injected into the system prompt |
+| `/project none` | Clear the active project |
+
+Projects are containers stored in `~/.wild-claude-pi/projects/<id>/` (a `project.json` plus a `knowledge/` markdown KB). They hold a description, repos, environment notes, secret **references** (names only, never values), links, and project-scoped dashboards. When you mention a new project or repo in chat, the bot may **propose** creating a container via an inline keyboard (accepting creates a stub).
+
 ## Mission Control (Background Tasks)
 
 | Command | Description |
@@ -253,31 +263,30 @@ Requires: `GROQ_API_KEY` (STT via Whisper) and `ELEVENLABS_API_KEY` + `ELEVENLAB
 | Command | Description |
 |---------|-------------|
 | `/dashboard` | Get web dashboard link |
+| `/dashboard_create <description>` | Create a declarative dashboard from a plain-language description (LLM-generated widgets) |
+| `/dashboard_edit <id> <instruction>` | Refine an existing dashboard conversationally (the instruction can be a transcribed voice message); widget ids are preserved so logged data survives |
 
 Dashboard URL: `http://<host>:3141`
 
-The page loads a login screen. No token needed in the URL. Set `DASHBOARD_TOKEN` to enable auth.
+The page loads a login screen. No token needed in the URL. Set `DASHBOARD_TOKEN` to enable auth. Set `DASHBOARD_HTTPS=true` to serve over self-signed HTTPS (cert cached in `USER_DATA_DIR` with SANs for localhost / 127.0.0.1 / LAN IPs) — required for in-browser microphone / voice input over a LAN.
+
+### Declarative Dashboards
+
+Dashboards are JSON specs of widgets (metric, chart, table, list, feed, form, note, gauge, insight) resolved server-side. Data sources: `http` (JSON API + dotted jsonPath + `{{SECRET}}` substitution, SSRF-guarded), `rss`, `local` (tracker data — forms write, charts/metrics read; local aggregations: sum, avg, count, last, list, streak, delta), and `static`. Create from a template, a plain-language prompt, or a raw spec; a guided 2-step flow lets the AI recommend widgets and ask clarifying questions before generating. Form widgets support voice autofill (browser transcribes, Haiku maps text to fields) and on-demand AI insights. Default templates: `markets-crypto`, `fitness-nutrition`, `news-briefing`, `connected-services` (GitHub + Vercel). API base: `/api/dash`.
 
 ### Dashboard Modules
 
-1. **Command Center** — Chat interface with model indicators
-2. **Memory Palace** — Search, browse, pin/unpin memories
-3. **Mission Control** — Goals, projects, task management
-4. **Agent Hub** — Agent status, lanes, model badges
-5. **Automation** — Scheduled tasks, cron management
-6. **Skills & MCP** — MCP server management, skill browser
-7. **System Vitals** — CPU, RAM, disk, API costs
-8. **Daily Journal** — Auto-generated entries from reviews
-9. **External Dashboards** — Vercel, GitHub, Neon, Supabase, Stripe, Cloudflare, Sentry status panels
-10. **File Explorer** — Browse the user-data dir
-11. **Live Activity** — Real-time event stream
-12. **Trace Inspector** — Per-session traces + 30-day cost breakdown
-13. **Evals** — Declarative test cases with one-click runs
-14. **Workflows** — Declarative DAG workflows with step state
-15. **Reflection & Digest** — Generate / browse reflections + period digests
-16. **Skill Marketplace** — TokenJuice stats + curated picks + agentskills.io search
-17. **Hermes Lab** — Budget, semantic memory search, fine-tune estimate, agent self-improvement
-18. **Settings** — Configuration, status, links; first card is **Personality** (editor, preview, presets)
+20 modules grouped in the sidebar nav. The framework-free SPA is the only UI (the legacy single-file dashboard and `/legacy` route have been removed).
+
+- **Chat** — Command Center (chat with model indicators)
+- **Projects** — Projects (per-project containers: repos, env notes, secret references, KB, scoped dashboards)
+- **Knowledge** — Memory Palace · Knowledge Wiki (durable non-decaying articles) · Daily Journal · Reflection & Digest
+- **Agents** — Agent Hub · Mission Control · Automation · Workflows (create / edit / "describe it" generate, shared YAML editor) · Evals (same authoring set)
+- **Ecosystem** — Dashboards (declarative builder) · Skills & MCP (Installed / Browse / MCP tabs — Browse is the former Marketplace)
+- **Monitoring** — System Vitals · Trace Inspector · Live Activity · Audit Log · Hermes Lab (budget, semantic memory search, fine-tune estimate, agent self-improvement)
+- **System** — File Explorer · Settings (first card is **Personality** — editor, preview, presets)
+
+External service dashboards (Vercel / Neon / GitHub / etc.) are no longer a standalone module — they are folded into the declarative engine as the `connected-services` template.
 
 ## Hermes Stack commands
 

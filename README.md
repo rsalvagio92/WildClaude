@@ -4,7 +4,7 @@
 
 Lightweight enough to run on a Raspberry Pi. Powerful enough to manage your entire digital life.
 
-Primary interface: **Telegram**. Secondary: **Web Dashboard** (11 modules, dark mode). Tertiary: **CLI**.
+Primary interface: **Telegram**. Secondary: **Web Dashboard** (20 modules, dark mode). Tertiary: **CLI**.
 
 ## Why WildClaude?
 
@@ -36,7 +36,9 @@ When Anthropic restricted third-party access to Claude, tools like OpenClaw that
 
 ### Integrations
 - **36 MCP server integrations** (Notion, GitHub, Slack, Vercel, Neon, Stripe, Supabase...)
-- **External dashboards** — connect Vercel, Neon, GitHub, Stripe, Cloudflare, Sentry with purpose-built UIs
+- **Declarative dashboards** — build custom dashboards from JSON specs, a template, or a plain-language prompt (widgets: metric, chart, table, list, feed, form, note, gauge, insight). Connected-services template wires Vercel/GitHub/etc. via HTTP + secrets
+- **Projects** — per-project containers (repos, env notes, secret references, KB, scoped dashboards) auto-injected into chat context
+- **Knowledge Wiki** — durable, editable, non-decaying articles recalled on topic mention
 - **Import from OpenClaw** — memories, API keys, MCP configs, cron jobs, agent metadata
 - **Voice** — Groq Whisper (STT) + ElevenLabs (TTS)
 - **WhatsApp & Slack bridges**
@@ -47,7 +49,7 @@ When Anthropic restricted third-party access to Claude, tools like OpenClaw that
 
 ### Infrastructure
 - **Encrypted secrets manager** — AES-256-GCM, manage from dashboard or Telegram
-- **Dark-mode dashboard** with 17 modules and real-time SSE updates
+- **Dark-mode dashboard** with 20 modules and real-time SSE updates (optional self-signed HTTPS via `DASHBOARD_HTTPS=true`, required for in-browser voice input over a LAN)
 - **Security** — PIN lock, idle auto-lock, emergency kill phrase, full audit log
 - **Lightweight** — runs anywhere from a PC to a Raspberry Pi
 - **Data separation** — code in repo, all user data in `~/.wild-claude-pi/`
@@ -107,23 +109,19 @@ Telegram / Dashboard / CLI
 
 ## Dashboard
 
-11 modules, dark mode, real-time SSE updates, accessible from your local network.
+20 modules, dark mode, real-time SSE updates, accessible from your local network. A framework-free SPA (no build step); the legacy single-file UI has been removed. Set `DASHBOARD_HTTPS=true` to serve over self-signed HTTPS (required for in-browser microphone / voice input over a LAN).
 
 ![Dashboard — Agent Hub](docs/images/dashboard-agent-hub.png)
 
-| Module | What it does |
-|--------|-------------|
-| Command Center | Chat with the bot from browser |
-| Memory Palace | Search, browse, pin/delete memories |
-| Mission Control | Goals, projects, task management |
-| Agent Hub | 17 agents grouped by lane, edit system prompts |
-| Workflow Engine | Scheduled tasks, cron management |
-| Skills & MCP | Manage skills + install/remove 36 MCP servers |
-| System Vitals | CPU, RAM, disk, temperature, network, costs |
-| Daily Journal | Auto-generated entries from reviews |
-| External Dashboards | Vercel, GitHub, Neon, Supabase, Stripe, Cloudflare, Sentry |
-| Live Activity | Real-time stream of all bot activity |
-| Settings | Personality, bot identity, secrets, profile, import |
+| Group | Modules |
+|-------|---------|
+| **Chat** | Command Center |
+| **Projects** | Projects (containers: repos, env notes, secret references, KB, scoped dashboards) |
+| **Knowledge** | Memory Palace, Knowledge Wiki, Daily Journal, Reflection & Digest |
+| **Agents** | Agent Hub, Mission Control, Automation, Workflows, Evals |
+| **Ecosystem** | Dashboards (declarative builder), Skills & MCP (Installed / Browse / MCP tabs) |
+| **Monitoring** | System Vitals, Trace Inspector, Live Activity, Audit Log, Hermes Lab |
+| **System** | File Explorer, Settings |
 
 ## Agents
 

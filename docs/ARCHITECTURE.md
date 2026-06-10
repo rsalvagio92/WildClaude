@@ -9,7 +9,7 @@ WildClaude is a lightweight personal AI operating system. It runs as a Node.js s
 │                    USER INTERFACES                          │
 │                                                              │
 │  Telegram (Grammy) │ Dashboard (Hono)   │ CLI onboarding    │
-│  - Text, voice     │ - 18 modules       │ - first-run       │
+│  - Text, voice     │ - 20 modules (SPA) │ - first-run       │
 │  - Images, files   │ - SSE real-time    │ - import wizard   │
 │  - Commands        │ - login screen     │                   │
 │                    │                    │ ACP server        │
@@ -175,14 +175,20 @@ Path helpers in `src/paths.ts`:
 | File | Purpose |
 |------|---------|
 | `overlay.ts` | Generic overlay resolution: user (`~/.wild-claude-pi/`) overrides project defaults for agents, skills, dashboards, hooks, config |
-| `external-dashboards.ts` | External service dashboard connections (Vercel, GitHub, Neon, Supabase, Stripe, Cloudflare, Sentry) + user-defined services from `config.json` |
+| `external-dashboards.ts` | Legacy external service dashboard connections (Vercel, GitHub, Neon, Supabase, Stripe, Cloudflare, Sentry) + user-defined services from `config.json`, served under `/api/dashboards`. Superseded in the UI by the declarative engine's `connected-services` template |
 
 ### Infrastructure (src/)
 
 | File | Purpose |
 |------|---------|
-| `dashboard.ts` | Hono web server, API endpoints, SSE events |
-| `dashboard-html.ts` | Dark-mode SPA (11 modules), login screen |
+| `dashboard.ts` | Hono web server, API endpoints, SSE events; serves the framework-free SPA from `dashboard-ui/` (the legacy `dashboard-html.ts` single-file UI and `/legacy` route have been removed) |
+| `dashboard-tls.ts` | Optional self-signed HTTPS (`DASHBOARD_HTTPS=true`); cert cached in `USER_DATA_DIR` with SANs for localhost / 127.0.0.1 / LAN IPs (needed for in-browser mic over a LAN) |
+| `dashboards-v2.ts` | Declarative dashboard engine — JSON widget specs resolved server-side (data sources: http / rss / local / static; local aggregations sum/avg/count/last/list/streak/delta); LLM generation, refinement, voice form parsing, on-demand insight. API base `/api/dash` |
+| `dashboard-templates.ts` | Default declarative dashboard templates (markets-crypto, fitness-nutrition, news-briefing, connected-services) |
+| `projects.ts` | Project containers in `USER_DATA_DIR/projects/<id>/` (project.json + knowledge/ KB); `buildProjectReference()` injects repos/env/KB/secret availability into the system prompt for a chat's active project |
+| `project-detect.ts` | Pre-filter + Haiku extraction that proposes creating a project container (via Telegram inline keyboard) when a message mentions a new project/repo |
+| `wiki.ts` | Knowledge Wiki — durable, editable, non-decaying articles layered on `memory_blocks` (owner `wiki` / `wiki-draft`); recall-on-mention injection; curator distills recurring memory topics into draft articles |
+| `skill-sync.ts` | Symlinks `USER_DATA_DIR/skills` into `~/.claude/skills` at startup and on each create/import/accept so the model auto-discovers them |
 | `scheduler.ts` | Cron task execution |
 | `security.ts` | PIN lock, kill phrase, audit logging |
 | `voice.ts` | STT (Groq Whisper), TTS (ElevenLabs) |
@@ -591,9 +597,9 @@ For any resource (agent, skill, dashboard service, config):
 
 New resources created via Telegram commands (`/create_agent`, `/create_skill`) or the dashboard API (`POST /api/dashboards`) are **always** written to `USER_DATA_DIR`. The project root is never modified by the running system. This means `git pull` on the repo will never conflict with user customizations.
 
-## External Service Dashboards
+## External Service Dashboards (legacy `/api/dashboards`)
 
-`src/external-dashboards.ts` connects to external APIs and exposes their status, logs, and metrics through the dashboard UI and REST API.
+`src/external-dashboards.ts` connects to external APIs and exposes their status, logs, and metrics through the REST API. In the UI it is superseded by the declarative dashboard engine (`dashboards-v2.ts`, API base `/api/dash`) — external services are now reached through the `connected-services` template rather than a dedicated module. The endpoints below remain available.
 
 ### Built-in Services
 
@@ -633,21 +639,29 @@ User-defined services with the same ID override built-in services. Secrets are a
 
 ## Dashboard
 
-11-module dark-mode SPA served by Hono at port 3141 (default). Page loads a login screen; `DASHBOARD_TOKEN` is optional.
+20-module dark-mode SPA (framework-free ES modules under `dashboard-ui/`, no build step) served by Hono at port 3141 (default). Page loads a login screen; `DASHBOARD_TOKEN` is optional. Set `DASHBOARD_HTTPS=true` for self-signed HTTPS (see `dashboard-tls.ts`). The legacy single-file dashboard and `/legacy` route have been removed.
+
+Sidebar nav groups: **Chat** (Command Center) · **Projects** (Projects) · **Knowledge** (Memory Palace, Knowledge Wiki, Daily Journal, Reflection & Digest) · **Agents** (Agent Hub, Mission Control, Automation, Workflows, Evals) · **Ecosystem** (Dashboards, Skills & MCP) · **Monitoring** (System Vitals, Trace Inspector, Live Activity, Audit Log, Hermes Lab) · **System** (File Explorer, Settings).
 
 | Module | API Endpoint | Update Method |
 |--------|-------------|---------------|
-| Command Center | POST /api/chat | SSE /api/events |
+| Command Center | POST /api/chat | SSE /api/chat/stream |
+| Projects | GET /api/projects | On-demand |
 | Memory Palace | GET /api/memories | On-demand |
+| Knowledge Wiki | GET /api/wiki | On-demand |
 | Mission Control | GET /api/missions | On-demand |
 | Agent Hub | GET /api/agents | On-demand |
-| Workflow Engine | GET /api/tasks | On-demand |
+| Automation | GET /api/tasks | On-demand |
+| Workflows | GET /api/workflows | On-demand |
+| Evals | GET /api/evals | On-demand |
+| Dashboards | GET /api/dash | On-demand |
 | Skills & MCP | GET /api/mcp | On-demand |
 | System Vitals | GET /api/vitals | Poll 5s |
 | Daily Journal | GET /api/conversations | On-demand |
-| External Dashboards | GET /api/dashboards | On-demand |
-| Live Activity | SSE /api/events | Real-time stream |
+| Live Activity | SSE /api/chat/stream | Real-time stream |
 | Settings (Personality) | GET/PUT /api/personality | On-demand |
+
+Workflows and Evals each expose a full authoring set: `POST /api/{workflows,evals}` (save), `/validate`, `/generate` (LLM "describe it"), `GET /raw/:name`, `DELETE /:name`.
 
 ### Personality API
 

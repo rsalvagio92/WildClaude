@@ -129,9 +129,9 @@ Best for: Stress-testing plans, finding gaps, challenging assumptions, risk iden
 ### @dashboard-builder (Sonnet 4.6)
 **Triggers:** dashboard, service, integration, connect, API, external
 
-Creates and manages external service dashboard configurations. Builds JSON configs for connecting APIs like Vercel, Neon, Stripe to the dashboard UI.
+Creates and manages declarative dashboard specs. Builds JSON widget specs (metric, chart, table, list, feed, form, etc.) for the dashboard engine — including connecting APIs like Vercel, Neon, Stripe via the `connected-services` template.
 
-Best for: Adding new external service integrations, configuring API endpoints, building custom dashboard cards.
+Best for: Building custom dashboards from a description, adding external service integrations, configuring API endpoints and widgets.
 
 ---
 

@@ -8,6 +8,8 @@ Skills are markdown files that define domain-specific knowledge and instructions
 - Project defaults: `skills/<name>/SKILL.md` (in the repo)
 - User-created: `~/.wild-claude-pi/skills/<name>/SKILL.md` (override project defaults by name)
 
+User-created skills are symlinked into `~/.claude/skills` automatically — at startup and on each create / import / accept (`src/skill-sync.ts`) — so the Claude model auto-discovers them.
+
 ## Installed Skills
 
 ### Life Skills
