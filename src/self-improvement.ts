@@ -171,12 +171,21 @@ export async function runCodeImprovement(send: (text: string) => Promise<void>):
     return 'no change';
   }
 
-  // Guard: file count + forbidden paths.
-  const files = changed.split('\n').map((l) => l.slice(3).trim()).filter(Boolean);
-  const forbidden = files.find((f) => /^(package(-lock)?\.json|\.env|\.github\/)/.test(f) || /secrets/i.test(f) || !/^(src\/|dashboard-ui\/)/.test(f));
+  // Guard: file count + forbidden paths. Parse porcelain robustly — strip the
+  // 1-2 char status code + whitespace, unquote, and take the post-rename path.
+  const lines = changed.split('\n').filter(Boolean);
+  const files = lines.map((l) => {
+    let p = l.replace(/^.{1,2}\s+/, '').trim();        // drop "XY " status prefix
+    if (p.includes(' -> ')) p = p.split(' -> ').pop()!; // rename: keep new path
+    return p.replace(/^"|"$/g, '');                     // unquote
+  });
+  // Allowed only under src/ or dashboard-ui/; never package*/env/secrets/CI.
+  const forbidden = files.find((f) =>
+    !/^(src\/|dashboard-ui\/)/.test(f) ||
+    /^(package(-lock)?\.json|\.env)/.test(f) || /secrets/i.test(f) || f.includes('.github/'));
   if (forbidden || files.length > SELF_IMPROVE_MAX_FILES) {
     cleanupWorktree(branch);
-    await send(`🛠️ Code self-improvement: change rejected pre-gate (touched ${files.length} files${forbidden ? `, incl. forbidden \`${forbidden}\`` : ''}).`);
+    await send(`🛠️ Code self-improvement: change rejected pre-gate (touched ${files.length} files${forbidden ? `, incl. out-of-scope \`${forbidden}\`` : ''}).`);
     return 'rejected: scope';
   }
 
