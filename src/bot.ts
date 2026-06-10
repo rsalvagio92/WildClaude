@@ -799,7 +799,14 @@ export async function handleMessage(ctx: Context, message: string, forceVoiceRep
       const activeId = getActiveProject(String(chatId));
       if (activeId) projectRef = buildProjectReference(activeId) || '';
     } catch { /* projects optional */ }
-    const appendedPrompt = [personalitySystemPrompt, moodInfo.snippet, projectRef]
+    // Knowledge wiki: inject any article whose topic is mentioned (cheap string
+    // match, capped). Durable, curated reference that doesn't decay.
+    let wikiRef = '';
+    try {
+      const { recallForText } = await import('./wiki.js');
+      wikiRef = recallForText(message) || '';
+    } catch { /* wiki optional */ }
+    const appendedPrompt = [personalitySystemPrompt, moodInfo.snippet, projectRef, wikiRef]
       .filter((s) => s && s.trim().length > 0)
       .join('\n\n');
 

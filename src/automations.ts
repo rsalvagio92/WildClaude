@@ -112,6 +112,13 @@ export const DEFAULT_AUTOMATIONS: AutomationDef[] = [
     cron: '0 2 * * *',
     description: 'Miglioramento codice su branch isolato (richiede approvazione) alle 02:00 — disattivo finché SELF_IMPROVE_CODE_ENABLED=true',
   },
+  {
+    id: 'auto-wiki-curate',
+    name: 'Wiki curation (auto-draft articles)',
+    prompt: '__internal:wiki_curate:run',
+    cron: '0 5 * * *',
+    description: 'Distilla articoli wiki (bozze) dai temi ricorrenti nelle memorie importanti, alle 05:00',
+  },
 ];
 
 /**

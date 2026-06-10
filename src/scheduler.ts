@@ -83,6 +83,12 @@ async function handleInternalSentinel(prompt: string, send: Sender): Promise<voi
     try { await runCodeImprovement(send); } catch (err) { logger.warn({ err }, 'self-improvement failed'); }
     return;
   }
+  if (prompt === '__internal:wiki_curate:run') {
+    // Distill recurring important-memory topics into DRAFT wiki articles.
+    const { runWikiCuration } = await import('./wiki.js');
+    try { await runWikiCuration(send); } catch (err) { logger.warn({ err }, 'wiki curation failed'); }
+    return;
+  }
   logger.warn({ prompt }, 'unknown internal sentinel');
 }
 

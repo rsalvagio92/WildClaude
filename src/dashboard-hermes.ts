@@ -54,6 +54,16 @@ import {
   generateWorkflow,
 } from './workflows.js';
 import {
+  listArticles as listWikiArticles,
+  getArticleById as getWikiArticle,
+  upsertArticle as upsertWikiArticle,
+  editArticle as editWikiArticle,
+  approveArticle as approveWikiArticle,
+  deleteArticle as deleteWikiArticle,
+  distillArticle as distillWikiArticle,
+  runWikiCuration,
+} from './wiki.js';
+import {
   listReflections,
   generateReflection,
   acknowledgeReflection,
@@ -129,6 +139,40 @@ export function registerHermesRoutes(app: Hono): void {
     } catch (err) {
       return c.json({ error: err instanceof Error ? err.message : String(err) }, 400);
     }
+  });
+
+  // ── Knowledge Wiki (durable topic articles over memory_blocks) ──────
+  app.get('/api/wiki', (c) => {
+    const includeDrafts = c.req.query('includeDrafts') === 'true';
+    return c.json({ articles: listWikiArticles({ includeDrafts: true }).filter((a) => includeDrafts || !a.draft) });
+  });
+  app.get('/api/wiki/:id', (c) => {
+    const a = getWikiArticle(parseInt(c.req.param('id'), 10));
+    return a ? c.json({ article: a }) : c.json({ error: 'not found' }, 404);
+  });
+  app.post('/api/wiki', async (c) => {
+    const body = await c.req.json().catch(() => ({})) as { topic?: string; body?: string; draft?: boolean };
+    if (!body.topic || !body.body) return c.json({ error: 'topic and body required' }, 400);
+    return c.json({ article: upsertWikiArticle({ topic: body.topic, body: body.body, draft: body.draft }) }, 201);
+  });
+  app.put('/api/wiki/:id', async (c) => {
+    const patch = await c.req.json().catch(() => ({})) as { body?: string; topic?: string; pinned?: boolean };
+    const a = editWikiArticle(parseInt(c.req.param('id'), 10), patch);
+    return a ? c.json({ article: a }) : c.json({ error: 'not found' }, 404);
+  });
+  app.post('/api/wiki/:id/approve', (c) =>
+    approveWikiArticle(parseInt(c.req.param('id'), 10)) ? c.json({ ok: true }) : c.json({ error: 'not a draft' }, 404));
+  app.delete('/api/wiki/:id', (c) =>
+    deleteWikiArticle(parseInt(c.req.param('id'), 10)) ? c.json({ ok: true }) : c.json({ error: 'not found' }, 404));
+  app.post('/api/wiki/distill', async (c) => {
+    const body = await c.req.json().catch(() => ({})) as { topic?: string; publish?: boolean };
+    if (!body.topic) return c.json({ error: 'topic required' }, 400);
+    const res = await distillWikiArticle(body.topic, { publish: body.publish });
+    return res.ok ? c.json({ article: res.article }, 201) : c.json({ error: res.error }, 422);
+  });
+  app.post('/api/wiki/curate', async (c) => {
+    const drafted = await runWikiCuration(undefined, { max: 5 });
+    return c.json({ drafted });
   });
 
   app.get('/api/whatdoyouknow', (c) => {

@@ -5,6 +5,7 @@ export const MODULES = [
   { id: 'command',    title: 'Command Center',     icon: '💬', group: 'Chat' },
 
   { id: 'memory',     title: 'Memory Palace',       icon: '🧠', group: 'Knowledge' },
+  { id: 'wiki',       title: 'Knowledge Wiki',      icon: '📚', group: 'Knowledge' },
   { id: 'journal',    title: 'Daily Journal',       icon: '📓', group: 'Knowledge' },
   { id: 'reflection', title: 'Reflection & Digest', icon: '🔮', group: 'Knowledge' },
 
