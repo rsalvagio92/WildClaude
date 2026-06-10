@@ -102,7 +102,16 @@ function automationRow(a, rerun) {
     ]),
     el('div.row', { style: 'justify-content:space-between;align-items:center;margin-top:8px' }, [
       el('span.dim', { style: 'font-size:12px', text: 'Next: ' + (a.next_run ? fmtTime(a.next_run) : '—') }),
-      el('button.btn.btn-sm', { text: 'Edit', onclick: () => openEdit(a, rerun) }),
+      el('div.row', { style: 'gap:6px' }, [
+        el('button.btn.btn-sm', { text: 'Edit', onclick: () => openEdit(a, rerun) }),
+        // Built-in automations can only be disabled, not deleted.
+        a.source === 'user' ? el('button.btn.btn-sm.btn-danger', {
+          text: 'Delete',
+          onclick: () => confirmDialog(`Delete automation "${a.name || a.id}"?`, () =>
+            action(() => api.del(`/api/automations/${encodeURIComponent(a.id)}`), { ok: 'Deleted', refresh: rerun }),
+            { danger: true, confirmText: 'Delete' }),
+        }) : null,
+      ]),
     ]),
   ]);
 }

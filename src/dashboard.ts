@@ -357,6 +357,23 @@ export function startDashboard(botApi?: Api<RawApi>): void {
     return c.json({ ok: true, id }, 201);
   });
 
+  // DELETE /api/automations/:id — remove a user-defined automation.
+  // Default automations can't be deleted (only disabled via PUT); attempting
+  // to delete one returns 400. Also removes its scheduled_tasks DB row.
+  app.delete('/api/automations/:id', (c) => {
+    const id = c.req.param('id');
+    if (DEFAULT_AUTOMATIONS.some((d) => d.id === id)) {
+      return c.json({ error: 'Cannot delete a built-in automation — disable it instead' }, 400);
+    }
+    const config = loadUserConfig();
+    const automations = config.automations || [];
+    const next = automations.filter((a) => a.id !== id);
+    if (next.length === automations.length) return c.json({ error: 'Automation not found' }, 404);
+    saveUserConfig({ ...config, automations: next });
+    try { deleteScheduledTask(id); } catch { /* no DB row */ }
+    return c.json({ ok: true });
+  });
+
   // ── Mission Control endpoints ────────────────────────────────────────
 
   app.get('/api/mission/tasks', (c) => {
