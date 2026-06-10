@@ -489,19 +489,31 @@ function formWidget(dashId, w) {
 function micButton(onText, { label = '🎤 Speak', title = 'Speak' } = {}) {
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
   if (!SR) return null;
-  let listening = false;
+  let rec = null;                         // non-null while listening
   const btn = el('button.btn.btn-sm', { type: 'button', title, text: label });
+  const reset = () => { rec = null; btn.textContent = label; btn.classList.remove('rec'); };
   btn.onclick = () => {
-    if (listening) return;
-    const rec = new SR();
+    // Second tap while listening → finalize and send what was heard.
+    if (rec) { try { rec.stop(); } catch { reset(); } return; }
+    rec = new SR();
     rec.lang = navigator.language || 'en-US';
-    rec.interimResults = false;
+    rec.interimResults = true;            // accumulate so a manual stop still has text
+    rec.continuous = true;                // keep listening until the user taps Stop
     rec.maxAlternatives = 1;
-    listening = true; btn.textContent = '● Listening…'; btn.classList.add('rec');
-    rec.onresult = (ev) => { try { onText(ev.results[0][0].transcript); } catch (e) { toastErr(e.message); } };
-    rec.onerror = (ev) => toastErr('Voice error: ' + (ev.error || 'unknown'));
-    rec.onend = () => { listening = false; btn.textContent = label; btn.classList.remove('rec'); };
-    try { rec.start(); } catch { listening = false; btn.textContent = label; btn.classList.remove('rec'); }
+    let finalText = '';
+    btn.textContent = '⏹ Stop & send'; btn.classList.add('rec');
+    rec.onresult = (ev) => {
+      finalText = '';
+      for (let i = 0; i < ev.results.length; i++) finalText += ev.results[i][0].transcript;
+    };
+    rec.onerror = (ev) => { if (ev.error !== 'aborted' && ev.error !== 'no-speech') toastErr('Voice error: ' + (ev.error || 'unknown')); };
+    rec.onend = () => {
+      const text = finalText.trim();
+      reset();
+      if (text) { try { onText(text); } catch (e) { toastErr(e.message); } }
+      else toastErr('Didn’t catch that — try again.');
+    };
+    try { rec.start(); } catch { reset(); }
   };
   return btn;
 }
