@@ -867,6 +867,20 @@ export async function handleMessage(ctx: Context, message: string, forceVoiceRep
         const { appendLifeLog } = await import('./life-commands.js');
         appendLifeLog(message, rawResponse);
       } catch { /* life-commands not critical */ }
+      // Auto-project detection: if the user mentioned a new project/repo, propose
+      // creating a container (fire-and-forget; gated by a cheap pre-filter).
+      if (!message.startsWith('/')) {
+        void (async () => {
+          try {
+            const { maybeProposeProject } = await import('./project-detect.js');
+            const { InlineKeyboard } = await import('grammy');
+            await maybeProposeProject(message, (text, token, _name) => {
+              const kb = new InlineKeyboard().text('✅ Create', `proj:accept:${token}`).text('❌ No', `proj:reject:${token}`);
+              void ctx.reply(text, { parse_mode: 'HTML', reply_markup: kb }).catch(() => {});
+            });
+          } catch (err) { logger.debug({ err }, 'project-detect hook failed'); }
+        })();
+      }
     }
 
     // Emit assistant response to SSE clients (include routing info)
@@ -1124,6 +1138,25 @@ export function createBot(): Bot {
       });
     })().catch((err) => logger.warn({ err }, 'failed to wire inline keyboard for skill proposals'));
   }
+
+  // Auto-project proposals: accept/reject inline buttons from project detection.
+  bot.callbackQuery(/^proj:(accept|reject):(.+)$/, async (cqCtx) => {
+    const action = cqCtx.match[1]; const token = cqCtx.match[2];
+    const pd = await import('./project-detect.js');
+    if (action === 'accept') {
+      const r = pd.acceptProjectProposal(token);
+      await cqCtx.answerCallbackQuery(r.ok ? `Created project "${r.project!.name}"` : `Couldn't create it (${r.error})`);
+      if (r.ok) {
+        const base = DASHBOARD_URL || `${DASHBOARD_HTTPS ? 'https' : 'http'}://localhost:${DASHBOARD_PORT}`;
+        const link = DASHBOARD_TOKEN ? ` <a href="${base}/?token=${DASHBOARD_TOKEN}#/projects?id=${r.project!.id}">Open it</a>` : '';
+        void sendMessageWithRetry(bot.api, cqCtx.chat?.id ?? ALLOWED_CHAT_ID, `✅ Project <b>${r.project!.name}</b> created. Use /project use ${r.project!.id} to work in its context.${link}`, { parse_mode: 'HTML' }).catch(() => {});
+      }
+    } else {
+      pd.rejectProjectProposal(token);
+      await cqCtx.answerCallbackQuery('Okay, skipped.');
+    }
+    try { await cqCtx.editMessageReplyMarkup({ reply_markup: undefined }); } catch { /* */ }
+  });
 
   // Register commands in the Telegram menu (built-in + auto-discovered skills).
   // Extracted so hot-reload can re-run it when a skill is added/edited on disk.
