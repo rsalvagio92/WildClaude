@@ -178,7 +178,9 @@ export async function runCodeImprovement(send: (text: string) => Promise<void>):
     let p = l.replace(/^.{1,2}\s+/, '').trim();        // drop "XY " status prefix
     if (p.includes(' -> ')) p = p.split(' -> ').pop()!; // rename: keep new path
     return p.replace(/^"|"$/g, '');                     // unquote
-  });
+  // node_modules is our own symlink scaffolding (gitignore matches the dir, not
+  // the symlink), not an agent change — never count it toward scope.
+  }).filter((p) => p !== 'node_modules' && !p.startsWith('node_modules/'));
   // Allowed only under src/ or dashboard-ui/; never package*/env/secrets/CI.
   const forbidden = files.find((f) =>
     !/^(src\/|dashboard-ui\/)/.test(f) ||
@@ -217,7 +219,9 @@ export async function runCodeImprovement(send: (text: string) => Promise<void>):
   // ── Green: commit on the branch, record pending proposal ──
   let diffstat = '';
   try {
-    git('add -A', WORKTREE_DIR);
+    // Stage ONLY the agent's real files (the filtered list) — never the
+    // node_modules symlink scaffolding. `git add --` stages deletions too.
+    git(`add -- ${files.map((f) => `"${f}"`).join(' ')}`, WORKTREE_DIR);
     git(`commit -m "auto(self-improve): ${date}\n\n${agentSummary.slice(0, 400).replace(/"/g, "'")}"`, WORKTREE_DIR);
     diffstat = git(`diff --stat ${baseBranch} ${branch}`, PROJECT_ROOT).trim().slice(-600);
   } catch (err) {
