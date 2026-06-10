@@ -219,15 +219,19 @@ export async function runCodeImprovement(send: (text: string) => Promise<void>):
   // ── Green: commit on the branch, record pending proposal ──
   let diffstat = '';
   try {
-    // Stage ONLY the agent's real files (the filtered list) — never the
-    // node_modules symlink scaffolding. `git add --` stages deletions too.
-    git(`add -- ${files.map((f) => `"${f}"`).join(' ')}`, WORKTREE_DIR);
-    git(`commit -m "auto(self-improve): ${date}\n\n${agentSummary.slice(0, 400).replace(/"/g, "'")}"`, WORKTREE_DIR);
+    // Use spawnSync with arg arrays (NO shell) — the agent summary can contain
+    // backticks/$/newlines that would break a shell-interpolated git command.
+    // Stage ONLY the agent's real files (never the node_modules symlink).
+    const addRes = spawnSync('git', ['add', '--', ...files], { cwd: WORKTREE_DIR, stdio: 'pipe' });
+    if (addRes.status !== 0) throw new Error('git add: ' + (addRes.stderr?.toString() || addRes.status));
+    const msg = `auto(self-improve): ${date}\n\n${agentSummary.slice(0, 400)}`;
+    const commitRes = spawnSync('git', ['commit', '-m', msg], { cwd: WORKTREE_DIR, stdio: 'pipe' });
+    if (commitRes.status !== 0) throw new Error('git commit: ' + (commitRes.stderr?.toString() || commitRes.status));
     diffstat = git(`diff --stat ${baseBranch} ${branch}`, PROJECT_ROOT).trim().slice(-600);
   } catch (err) {
     cleanupWorktree(branch);
     logger.warn({ err }, 'self-improve: commit failed');
-    await send('🛠️ Code self-improvement: commit failed after gate passed.');
+    await send(`🛠️ Code self-improvement: commit failed after gate passed — ${err instanceof Error ? err.message.slice(0, 200) : 'unknown'}`);
     return 'commit failed';
   }
 
