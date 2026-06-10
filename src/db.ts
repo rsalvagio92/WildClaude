@@ -2481,7 +2481,8 @@ export function queryDashboardData(dashboardId: string, widgetId: string, sinceD
   let sql = 'SELECT id, data, created_at FROM dashboard_data WHERE dashboard_id = ? AND widget_id = ?';
   const params: unknown[] = [dashboardId, widgetId];
   if (sinceDays && sinceDays > 0) { sql += ' AND created_at >= ?'; params.push(Math.floor(Date.now() / 1000) - sinceDays * 86400); }
-  sql += ' ORDER BY created_at ASC';
+  // Tie-break by id so "last"/ordering is deterministic for entries logged in the same second.
+  sql += ' ORDER BY created_at ASC, id ASC';
   const rows = getDb().prepare(sql).all(...params) as Array<{ id: number; data: string; created_at: number }>;
   return rows.map((r) => ({ id: r.id, created_at: r.created_at, data: (() => { try { return JSON.parse(r.data); } catch { return {}; } })() }));
 }

@@ -26,6 +26,7 @@ import type { Hono } from 'hono';
 import { USER_DATA_DIR } from './paths.js';
 import { logger } from './logger.js';
 import { loadUserConfig, saveUserConfig } from './overlay.js';
+import { commitUserData } from './user-data-git.js';
 
 // ── Types ──────────────────────────────────────────────────────────────
 
@@ -206,22 +207,6 @@ export function setActiveProject(chatId: string, projectId: string | null): void
   cfg.activeProjects = cfg.activeProjects || {};
   if (projectId) cfg.activeProjects[chatId] = projectId; else delete cfg.activeProjects[chatId];
   saveUserConfig(cfg);
-}
-
-// ── User-data git commit (best effort; mirrors evolution.ts) ───────────
-
-function commitUserData(message: string): void {
-  // The user-data repo is initialised by evolution.ts on first use; we only
-  // commit if it already exists. Kept self-contained to avoid a module cycle.
-  try {
-    const { execSync, spawnSync } = require('child_process') as typeof import('child_process');
-    if (!fs.existsSync(path.join(USER_DATA_DIR, '.git'))) return; // evolution inits the repo
-    execSync('git add -A', { cwd: USER_DATA_DIR, stdio: 'pipe' });
-    const dirty = execSync('git status --porcelain', { cwd: USER_DATA_DIR, stdio: 'pipe' }).toString().trim();
-    if (!dirty) return;
-    const r = spawnSync('git', ['commit', '-m', message], { cwd: USER_DATA_DIR, stdio: 'pipe' });
-    if (r.status !== 0) logger.debug({ message }, 'project commit skipped');
-  } catch { /* non-fatal */ }
 }
 
 // ── API routes ─────────────────────────────────────────────────────────

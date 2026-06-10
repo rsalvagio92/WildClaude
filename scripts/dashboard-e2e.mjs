@@ -2,16 +2,15 @@
 // the server); this script logs in, visits every module, asserts it renders
 // without an error box / console error, and reports a per-module matrix.
 import { chromium } from 'playwright';
+import { MODULES as MANIFEST_MODULES } from '../dashboard-ui/js/manifest.js';
 
 const BASE = process.env.E2E_BASE || 'http://localhost:3199';
 const TOKEN = process.env.E2E_TOKEN || 'localtest123';
 
-const MODULES = [
-  'command', 'memory', 'journal', 'reflection', 'agents', 'mission',
-  'automation', 'workflows', 'evals', 'ecosystem', 'marketplace',
-  'dashboards', 'vitals', 'traces', 'activity', 'audit', 'hermes',
-  'files', 'settings',
-];
+// Source of truth = the live manifest, so this never drifts when modules are
+// added/removed (previously hardcoded, which silently missed/over-tested).
+const MODULES = MANIFEST_MODULES.map((m) => m.id);
+console.log(`Testing ${MODULES.length} modules from manifest: ${MODULES.join(', ')}`);
 
 const results = [];
 

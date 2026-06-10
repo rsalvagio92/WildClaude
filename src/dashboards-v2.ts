@@ -20,12 +20,22 @@
 
 import fs from 'fs';
 import path from 'path';
+import dns from 'dns';
 import type { Hono } from 'hono';
 
 import { USER_DATA_DIR } from './paths.js';
 import { logger } from './logger.js';
 import { insertDashboardData, queryDashboardData } from './db.js';
 import { DEFAULT_DASHBOARD_TEMPLATES } from './dashboard-templates.js';
+import { commitUserData } from './user-data-git.js';
+
+/** fetch() with a hard timeout so a slow/hanging API can't stall widget resolution. */
+async function fetchWithTimeout(url: string, opts: RequestInit = {}, ms = 8000): Promise<Response> {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), ms);
+  try { return await fetch(url, { ...opts, signal: ctrl.signal }); }
+  finally { clearTimeout(timer); }
+}
 
 // ── Types ──────────────────────────────────────────────────────────────
 
@@ -134,11 +144,12 @@ export function saveDashboard(spec: DashboardSpec): DashboardSpec {
   fs.mkdirSync(DASH_DIR, { recursive: true });
   const normalized = { ...spec, updatedAt: Date.now() };
   fs.writeFileSync(specPath(spec.id), JSON.stringify(normalized, null, 2));
+  commitUserData(`dashboard: save ${spec.id}`);
   return normalized;
 }
 
 export function deleteDashboard(id: string): boolean {
-  try { fs.unlinkSync(specPath(id)); return true; } catch { return false; }
+  try { fs.unlinkSync(specPath(id)); commitUserData(`dashboard: delete ${id}`); return true; } catch { return false; }
 }
 
 // ── Templates ──────────────────────────────────────────────────────────
@@ -156,14 +167,39 @@ export function instantiateTemplate(templateId: string, opts: { projectId?: stri
 
 // ── SSRF guard + secret substitution ─────────────────────────────────────
 
+function isPrivateIp(ip: string): boolean {
+  // IPv4 private/loopback/link-local/CGNAT + IPv6 loopback/ULA/link-local.
+  if (/^(127\.|10\.|192\.168\.|169\.254\.|0\.|100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.)/.test(ip)) return true;
+  if (/^172\.(1[6-9]|2\d|3[01])\./.test(ip)) return true;
+  if (ip === '::1' || ip === '::' || /^f[cd][0-9a-f]{2}:/i.test(ip) || /^fe80:/i.test(ip)) return true;
+  return false;
+}
+
+/** Sync URL sanity: https + not an obviously-internal hostname/literal IP. */
 function safeHttpUrl(url: string): boolean {
   let u: URL;
   try { u = new URL(url); } catch { return false; }
   if (u.protocol !== 'https:') return false;
   const h = u.hostname.toLowerCase();
   if (h === 'localhost' || h === '::1' || h.endsWith('.local') || h.endsWith('.internal') || !h.includes('.')) return false;
-  if (/^127\.|^10\.|^192\.168\.|^169\.254\.|^172\.(1[6-9]|2\d|3[01])\./.test(h)) return false;
+  if (isPrivateIp(h)) return false;
   return true;
+}
+
+/**
+ * Full SSRF check: sync sanity + DNS resolution so a public hostname that
+ * resolves to a private/loopback address (DNS-rebinding) is also blocked.
+ */
+async function isSafeHttpTarget(url: string): Promise<boolean> {
+  if (!safeHttpUrl(url)) return false;
+  try {
+    const host = new URL(url).hostname;
+    const addrs = await dns.promises.lookup(host, { all: true });
+    if (!addrs.length) return false;
+    return addrs.every((a) => !isPrivateIp(a.address));
+  } catch {
+    return false; // resolution failed → don't fetch
+  }
 }
 
 async function substituteSecrets(s: string): Promise<string> {
@@ -251,8 +287,8 @@ export async function resolveWidget(dashboardId: string, widget: Widget): Promis
     }
 
     if (src.kind === 'rss') {
-      if (!src.url || !safeHttpUrl(src.url)) return { ok: false, error: 'Invalid/blocked feed URL' };
-      const res = await fetch(src.url, { headers: { 'User-Agent': 'WildClaude/1.0' } });
+      if (!src.url || !(await isSafeHttpTarget(src.url))) return { ok: false, error: 'Invalid/blocked feed URL' };
+      const res = await fetchWithTimeout(src.url, { headers: { 'User-Agent': 'WildClaude/1.0' } });
       const xml = await res.text();
       const items: Array<{ title: string; link: string; date?: string }> = [];
       const re = /<(?:item|entry)\b[\s\S]*?<\/(?:item|entry)>/gi;
@@ -271,10 +307,10 @@ export async function resolveWidget(dashboardId: string, widget: Widget): Promis
     if (src.kind === 'http') {
       if (!src.url) return { ok: false, error: 'No URL' };
       const url = await substituteSecrets(src.url);
-      if (!safeHttpUrl(url)) return { ok: false, error: 'Invalid/blocked URL (https + public host only)' };
+      if (!(await isSafeHttpTarget(url))) return { ok: false, error: 'Invalid/blocked URL (https + public host only)' };
       const headers: Record<string, string> = {};
       for (const [k, v] of Object.entries(src.headers || {})) headers[k] = await substituteSecrets(String(v));
-      const res = await fetch(url, { method: src.method || 'GET', headers });
+      const res = await fetchWithTimeout(url, { method: src.method || 'GET', headers });
       if (!res.ok) return { ok: false, error: `HTTP ${res.status}` };
       const json = await res.json().catch(() => null);
       return { ok: true, data: getPath(json, src.jsonPath) };

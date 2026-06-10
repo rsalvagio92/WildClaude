@@ -25,6 +25,7 @@ const envConfig = readEnvFile([
   'EMERGENCY_KILL_PHRASE',
   'DASHBOARD_HOST',
   'DASHBOARD_HTTPS',
+  'AGENT_AUTO_SUGGEST',
 ]);
 
 // ── Multi-agent support ──────────────────────────────────────────────
@@ -165,6 +166,11 @@ export const DASHBOARD_HOST =
 // A self-signed cert is auto-generated and cached in USER_DATA_DIR on first run.
 export const DASHBOARD_HTTPS =
   (process.env.DASHBOARD_HTTPS || envConfig.DASHBOARD_HTTPS || '').toLowerCase() === 'true';
+// When true, a strong keyword match against a specialist agent appends a
+// non-binding "specialist available" hint to the system prompt (no rerouting,
+// no model change). Off by default — keeps routing behaviour unchanged.
+export const AGENT_AUTO_SUGGEST =
+  (process.env.AGENT_AUTO_SUGGEST || envConfig.AGENT_AUTO_SUGGEST || '').toLowerCase() === 'true';
 
 // Database encryption key (SQLCipher). Required for encrypted database access.
 export const DB_ENCRYPTION_KEY =

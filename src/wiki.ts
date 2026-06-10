@@ -132,13 +132,16 @@ export function deleteArticle(id: number): boolean {
  */
 export function recallForText(text: string, opts: { maxChars?: number } = {}): string {
   const t = (text || '').toLowerCase();
-  if (t.length < 3) return '';
+  if (t.length < 4) return '';
   const maxChars = opts.maxChars ?? 1800;
   const matched: WikiArticle[] = [];
   for (const a of listArticles()) {
     const topic = a.topic.toLowerCase().trim();
-    if (topic.length < 3) continue;
-    if (t.includes(topic)) matched.push(a);
+    if (topic.length < 4) continue; // avoid noisy 1–3 char topics ("API", "app")
+    // Whole-word(ish) match so "api" doesn't fire inside "rapid"; multi-word
+    // topics ("Acme API") still match as a phrase.
+    const re = new RegExp(`(^|[^a-z0-9])${topic.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}([^a-z0-9]|$)`, 'i');
+    if (re.test(t)) matched.push(a);
   }
   if (!matched.length) return '';
   matched.sort((a, b) => b.importance - a.importance || b.updatedAt - a.updatedAt);

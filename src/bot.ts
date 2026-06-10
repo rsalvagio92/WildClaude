@@ -21,6 +21,7 @@ import {
   DASHBOARD_TOKEN,
   DASHBOARD_URL,
   DASHBOARD_HTTPS,
+  AGENT_AUTO_SUGGEST,
   MAX_MESSAGE_LENGTH,
   activeBotToken,
   agentDefaultModel,
@@ -806,7 +807,17 @@ export async function handleMessage(ctx: Context, message: string, forceVoiceRep
       const { recallForText } = await import('./wiki.js');
       wikiRef = recallForText(message) || '';
     } catch { /* wiki optional */ }
-    const appendedPrompt = [personalitySystemPrompt, moodInfo.snippet, projectRef, wikiRef]
+    // Opt-in (AGENT_AUTO_SUGGEST): nudge the main model toward a matching
+    // specialist's approach without rerouting. Skips explicit @-delegations.
+    let agentHint = '';
+    if (AGENT_AUTO_SUGGEST && message.length > 30 && !message.trimStart().startsWith('@')) {
+      try {
+        const { findAgentForMessage } = await import('./agent-registry.js');
+        const a = findAgentForMessage(message);
+        if (a) agentHint = `[A specialist "${a.id}" agent fits this request — apply its approach. The user can run @${a.id} for a dedicated session.]`;
+      } catch { /* registry optional */ }
+    }
+    const appendedPrompt = [personalitySystemPrompt, moodInfo.snippet, projectRef, wikiRef, agentHint]
       .filter((s) => s && s.trim().length > 0)
       .join('\n\n');
 
@@ -1234,6 +1245,9 @@ export function createBot(): Bot {
       '/wa — WhatsApp messages\n' +
       '/slack — Slack messages\n' +
       '/dashboard — Web dashboard\n' +
+      '/dashboard_create — Build a custom dashboard from a description\n' +
+      '/dashboard_edit — Improve a dashboard by prompt or voice\n' +
+      '/project — Set the active project container for this chat\n' +
       '/stop — Stop current processing\n' +
       '/agents — List available agents\n' +
       '/delegate — Delegate task to agent\n' +
@@ -1242,6 +1256,8 @@ export function createBot(): Bot {
       '/lock — Lock session (PIN required to unlock)\n' +
       '/status — Security status\n\n' +
       'Delegation: @agentId: prompt or /delegate agentId prompt\n\n' +
+      'Dashboards, Projects and a Knowledge Wiki live in the web dashboard (/dashboard). ' +
+      'Mention a new repo/project and I\'ll offer to make a container for it; topics you teach me become wiki articles I recall automatically.\n\n' +
       'You can also send voice notes, photos, files, and videos.'
     );
   });
