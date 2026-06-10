@@ -495,6 +495,12 @@ function micButton(onText, { label = '🎤 Speak', title = 'Speak' } = {}) {
   btn.onclick = () => {
     // Second tap while listening → finalize and send what was heard.
     if (rec) { try { rec.stop(); } catch { reset(); } return; }
+    // Browsers only allow the mic in a secure context (HTTPS or localhost).
+    // On http://<lan-ip> the call throws "not-allowed" — explain rather than hang.
+    if (!window.isSecureContext) {
+      toastErr('Voice needs a secure page. Open the dashboard over HTTPS (or localhost) — see the Voice setup note.');
+      return;
+    }
     rec = new SR();
     rec.lang = navigator.language || 'en-US';
     rec.interimResults = true;            // accumulate so a manual stop still has text
@@ -506,14 +512,20 @@ function micButton(onText, { label = '🎤 Speak', title = 'Speak' } = {}) {
       finalText = '';
       for (let i = 0; i < ev.results.length; i++) finalText += ev.results[i][0].transcript;
     };
-    rec.onerror = (ev) => { if (ev.error !== 'aborted' && ev.error !== 'no-speech') toastErr('Voice error: ' + (ev.error || 'unknown')); };
+    rec.onerror = (ev) => {
+      if (ev.error === 'not-allowed' || ev.error === 'service-not-allowed') {
+        toastErr('Mic blocked — the dashboard is on http://. Voice needs HTTPS or localhost.');
+      } else if (ev.error !== 'aborted' && ev.error !== 'no-speech') {
+        toastErr('Voice error: ' + (ev.error || 'unknown'));
+      }
+    };
     rec.onend = () => {
       const text = finalText.trim();
       reset();
       if (text) { try { onText(text); } catch (e) { toastErr(e.message); } }
       else toastErr('Didn’t catch that — try again.');
     };
-    try { rec.start(); } catch { reset(); }
+    try { rec.start(); } catch (e) { reset(); toastErr('Could not start mic: ' + e.message); }
   };
   return btn;
 }
