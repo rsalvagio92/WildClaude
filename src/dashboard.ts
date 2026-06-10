@@ -120,12 +120,61 @@ export function startDashboard(botApi?: Api<RawApi>): void {
     return c.json({ error: 'Internal server error' }, 500);
   });
 
-  // Serve dashboard HTML (no auth — the page has its own login screen)
+  // ── New modular dashboard UI (static assets in dashboard-ui/) ─────────
+  // Served at request time from PROJECT_ROOT so no build step is needed.
+  // The legacy single-file dashboard stays available at /legacy as a fallback.
+  const UI_DIR = path.join(PROJECT_ROOT, 'dashboard-ui');
+  const MIME: Record<string, string> = {
+    '.html': 'text/html; charset=utf-8',
+    '.js': 'text/javascript; charset=utf-8',
+    '.css': 'text/css; charset=utf-8',
+    '.json': 'application/json; charset=utf-8',
+    '.svg': 'image/svg+xml',
+    '.png': 'image/png',
+    '.ico': 'image/x-icon',
+  };
+  // Cache file contents in memory (dev: short TTL so edits show on reload).
+  const uiCache = new Map<string, { body: Buffer; mtime: number }>();
+  const serveUiFile = (relPath: string): { body: Buffer; type: string } | null => {
+    // Reject path traversal — resolved path must stay inside UI_DIR.
+    const clean = relPath.replace(/\\/g, '/').replace(/\.\.+/g, '');
+    const abs = path.join(UI_DIR, clean);
+    if (!abs.startsWith(UI_DIR)) return null;
+    try {
+      const stat = fs.statSync(abs);
+      if (!stat.isFile()) return null;
+      const cached = uiCache.get(abs);
+      let body: Buffer;
+      if (cached && cached.mtime === stat.mtimeMs) {
+        body = cached.body;
+      } else {
+        body = fs.readFileSync(abs);
+        uiCache.set(abs, { body, mtime: stat.mtimeMs });
+      }
+      return { body, type: MIME[path.extname(abs)] ?? 'application/octet-stream' };
+    } catch {
+      return null;
+    }
+  };
+
+  const newUiAvailable = fs.existsSync(path.join(UI_DIR, 'index.html'));
+
   app.get('/', (c) => {
+    if (newUiAvailable) {
+      const f = serveUiFile('index.html');
+      if (f) return c.body(f.body as unknown as ArrayBuffer, 200, { 'Content-Type': f.type });
+    }
     return c.html(getDashboardHtml());
   });
-  app.get('/dashboard', (c) => {
-    return c.html(getDashboardHtml());
+  app.get('/dashboard', (c) => c.redirect('/'));
+  app.get('/legacy', (c) => c.html(getDashboardHtml()));
+
+  // Static assets for the new UI under /ui/* (no auth — the API behind them is gated).
+  app.get('/ui/*', (c) => {
+    const rel = c.req.path.replace(/^\/ui\//, '');
+    const f = serveUiFile(rel);
+    if (!f) return c.text('Not found', 404);
+    return c.body(f.body as unknown as ArrayBuffer, 200, { 'Content-Type': f.type });
   });
 
   // Liveness probe (no auth, no sensitive data) — for uptime monitors,
@@ -538,6 +587,14 @@ export function startDashboard(botApi?: Api<RawApi>): void {
     });
   });
 
+  // Selectable models — single source of truth for every model dropdown.
+  // New model families Anthropic ships appear here automatically once added
+  // to src/models.ts (no per-dropdown edits).
+  app.get('/api/models', async (c) => {
+    const { SELECTABLE_MODELS } = await import('./models.js');
+    return c.json({ models: SELECTABLE_MODELS, default: agentDefaultModel || 'claude-opus-4-8' });
+  });
+
   // Token / cost stats
   app.get('/api/tokens', (c) => {
     const chatId = c.req.query('chatId') || ALLOWED_CHAT_ID || '';
@@ -755,7 +812,10 @@ export function startDashboard(botApi?: Api<RawApi>): void {
     try {
       const { createAgent } = await import('./evolution.js');
       const agentPath = createAgent(body.id, body.name || body.id, body.description || '', body.model || MODELS.sonnet, body.lane, body.systemPrompt || `# ${body.name || body.id}\n\nYou are a ${body.id} agent.\n`);
-      return c.json({ ok: true, path: agentPath });
+      // Reload so the new agent shows up immediately (no restart needed).
+      const { reloadRegistry } = await import('./agent-registry.js');
+      reloadRegistry();
+      return c.json({ ok: true, path: agentPath }, 201);
     } catch (err) { return c.json({ error: String(err) }, 500); }
   });
 

@@ -303,10 +303,22 @@ User-defined services auto-register their secrets.
 ## Dashboard (Web UI)
 
 **URL:** `http://<host>:3141`
-**Stack:** Hono + HTMX + Alpine.js + TailwindCSS
-**Auth:** Login screen on page load. `DASHBOARD_TOKEN` is optional (set via `/set_secret`).
+**Stack:** Hono backend + a framework-free ES-module SPA served from `dashboard-ui/` (no build step, no CDN). Static assets under `/ui/*`; the legacy single-file dashboard remains at `/legacy`.
+**Auth:** Login screen on page load. `DASHBOARD_TOKEN` is optional (set via `/set_secret`). Token persists in `sessionStorage`, sent as a Bearer header.
 
-17 modules: Command Center, Memory Palace, Mission Control, Agent Hub, Automation, Skills & MCP, System Vitals, Daily Journal, External Dashboards, File Explorer, Live Activity, Trace Inspector, Evals, Workflows, Reflection & Digest, Skill Marketplace, Hermes Lab, Settings.
+**Architecture** (`dashboard-ui/`):
+- `index.html` — app shell (sidebar nav, topbar status, login gate, modal/toast roots).
+- `js/api.js` — token mgmt + `api.get/post/put/patch/del`, `chatId()`, `models()`.
+- `js/ui.js` — `el()` builder, `asyncView`, `card/stat/badge/table`, `modal`, `confirmDialog`, `toast`, `action`, formatters, `modelSelect()`.
+- `js/sse.js` — single shared `/api/chat/stream` connection with auto-reconnect.
+- `js/router.js` + `js/manifest.js` — hash router; modules lazy-imported per-nav (one broken module shows an inline error, never crashes the app).
+- `js/modules/*.js` — one file per module (the authoring contract is `dashboard-ui/MODULE_CONTRACT.md`).
+
+19 modules, grouped: **Chat** (Command Center) · **Knowledge** (Memory Palace incl. RAG context X-ray, Daily Journal, Reflection & Digest) · **Agents** (Agent Hub, Mission Control, Automation, Workflows, Evals) · **Ecosystem** (Skills & MCP, Marketplace, External Dashboards) · **Monitoring** (System Vitals, Trace Inspector, Live Activity, Audit Log, Hermes Lab) · **System** (File Explorer, Settings).
+
+Model dropdowns are fed from `GET /api/models` (single source = `src/models.ts → SELECTABLE_MODELS`), so new model families appear automatically. Caveman mode toggles from the sidebar footer.
+
+**E2E:** `scripts/dashboard-e2e.mjs` (every module renders clean) + `scripts/dashboard-edits-e2e.mjs` (edit round-trips persist), driven by Playwright against a local dashboard-only instance.
 
 ## Hermes Stack (advanced layer)
 

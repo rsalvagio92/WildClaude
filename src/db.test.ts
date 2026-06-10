@@ -317,14 +317,15 @@ describe('database', () => {
   // ── getRecentHighImportanceMemories edge cases ────────────────────
 
   describe('getRecentHighImportanceMemories edge cases', () => {
-    it('includes memories with importance exactly 0.5', () => {
-      saveStructuredMemory('chat1', 'raw', 'borderline', [], [], 0.5);
+    // Threshold is importance >= 0.4 (see getRecentHighImportanceMemories in db.ts).
+    it('includes memories at the 0.4 threshold', () => {
+      saveStructuredMemory('chat1', 'raw', 'borderline', [], [], 0.4);
       const mems = getRecentHighImportanceMemories('chat1', 10);
       expect(mems).toHaveLength(1);
     });
 
-    it('excludes memories with importance 0.49', () => {
-      saveStructuredMemory('chat1', 'raw', 'just below', [], [], 0.49);
+    it('excludes memories below the 0.4 threshold', () => {
+      saveStructuredMemory('chat1', 'raw', 'just below', [], [], 0.39);
       const mems = getRecentHighImportanceMemories('chat1', 10);
       expect(mems).toHaveLength(0);
     });

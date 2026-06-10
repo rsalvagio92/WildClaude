@@ -167,3 +167,24 @@ agents:
       book notes, learning goal.
     model: claude-sonnet-4-6
     lane: life
+
+  - id: e2e-test-agent
+    name: E2E Test
+    description: >
+      temp
+    model: claude-sonnet-4-6
+    lane: domain
+
+  - id: e2e-test-agent
+    name: E2E Test
+    description: >
+      temp
+    model: claude-sonnet-4-6
+    lane: domain
+
+  - id: e2e-test-agent
+    name: E2E Test
+    description: >
+      temp
+    model: claude-sonnet-4-6
+    lane: domain

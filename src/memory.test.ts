@@ -15,6 +15,13 @@ vi.mock('./db.js', () => ({
   pruneSlackMessages: vi.fn(() => 0),
   searchConsolidations: vi.fn(),
   getRecentConsolidations: vi.fn(),
+  backupDatabase: vi.fn(() => null),
+  checkDatabaseIntegrity: vi.fn(() => true),
+}));
+
+vi.mock('./activity-log.js', () => ({
+  archiveActivityLog: vi.fn(() => 0),
+  logActivity: vi.fn(),
 }));
 
 vi.mock('./memory-ingest.js', () => ({

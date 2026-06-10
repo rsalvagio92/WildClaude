@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="purple">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="color-scheme" content="dark" />
+  <title>WildClaude</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%90%BA%3C/text%3E%3C/svg%3E" />
+  <link rel="stylesheet" href="/ui/css/app.css" />
+</head>
+<body>
+  <!-- Login gate -->
+  <div id="login" class="login" hidden>
+    <form id="login-form" class="login-card">
+      <div class="login-logo" id="login-logo">🐺</div>
+      <h1 id="login-title">WildClaude</h1>
+      <p class="muted" id="login-tag">Personal AI Operating System</p>
+      <input id="login-token" type="password" placeholder="Dashboard token" autocomplete="current-password" autofocus />
+      <button type="submit" class="btn btn-accent">Unlock</button>
+      <div id="login-error" class="login-error" hidden></div>
+    </form>
+  </div>
+
+  <!-- App shell -->
+  <div id="app" class="app" hidden>
+    <aside id="sidebar" class="sidebar">
+      <div class="brand">
+        <span class="brand-logo" id="brand-logo">🐺</span>
+        <span class="brand-name" id="brand-name">WildClaude</span>
+        <button id="sidebar-toggle" class="icon-btn" title="Collapse" aria-label="Collapse sidebar">‹</button>
+      </div>
+      <nav id="nav" class="nav"><!-- populated by router --></nav>
+      <div class="sidebar-foot">
+        <button id="caveman-btn" class="nav-item caveman" title="Toggle caveman mode">🦴 <span>Caveman</span></button>
+        <button id="logout-btn" class="nav-item" title="Log out">⎋ <span>Log out</span></button>
+      </div>
+    </aside>
+
+    <div id="scrim" class="scrim" hidden></div>
+
+    <main class="main">
+      <header class="topbar">
+        <button id="menu-btn" class="icon-btn mobile-only" aria-label="Menu">☰</button>
+        <h2 id="page-title">Loading…</h2>
+        <div class="topbar-status" id="topbar-status">
+          <span class="dot" id="st-telegram" title="Telegram"></span>
+          <span class="dot" id="st-queue" title="Queue"></span>
+          <span class="pill" id="st-model" title="Active model">—</span>
+          <button id="refresh-btn" class="icon-btn" title="Refresh">⟳</button>
+        </div>
+      </header>
+      <section id="view" class="view"><!-- module renders here --></section>
+    </main>
+  </div>
+
+  <div id="modal-root"></div>
+  <div id="toast-root" class="toast-root"></div>
+
+  <script type="module" src="/ui/js/app.js"></script>
+</body>
+</html>
