@@ -43,6 +43,61 @@ function prependLog(entry: string): void {
   fs.writeFileSync(LOG_FILE, entry + separator + existing, 'utf-8');
 }
 
+/**
+ * Append a chat-derived note to life log.
+ * Called from bot.ts when the user says something life-relevant in chat.
+ * Never throws — failure is silent.
+ */
+export function appendLifeLog(userMsg: string, botResponse: string): void {
+  try {
+    const LIFE_TRIGGERS = [
+      /\b(mi(?:a|o|e|i)?\s+(?:priorit[àa]|obiettiv[oi]|goal|meta))\b/i,
+      /\b(aggiorna|update|cambia|modifica)\s+(?:le?\s+)?(?:priorit[àa]|obiettiv[oi]|goal|profil[oe]|info)\b/i,
+      /\b(sto\s+lavorando|sto\s+costruendo|mi\s+sto\s+concentrando)\b/i,
+      /\b(ricorda(?:ti)?\s+che|tieni\s+a\s+mente|non\s+dimenticare)\b/i,
+      /\b(my\s+(?:priority|goal|focus|objective))\b/i,
+      /\b(remember\s+that|keep\s+in\s+mind)\b/i,
+      /\b(i(?:'m|\s+am)\s+working\s+on)\b/i,
+    ];
+    const relevant = LIFE_TRIGGERS.some((re) => re.test(userMsg));
+    if (!relevant) return;
+
+    const today = new Date().toISOString().slice(0, 10);
+    const entry = `### ${today} — chat log\n**User:** ${userMsg.slice(0, 500)}\n**Bot:** ${botResponse.slice(0, 500)}`;
+    prependLog(entry);
+  } catch { /* silent */ }
+}
+
+/**
+ * Read the current content of a life domain kernel file.
+ * Returns empty string if not found.
+ */
+export function readLifeDomain(domain: string): string {
+  const validDomains = ['me', 'goals', 'health', 'finance', 'learning'];
+  if (!validDomains.includes(domain)) return '';
+  const keyFile = lifePath(domain, '_kernel', 'key.md');
+  try { return fs.readFileSync(keyFile, 'utf-8'); } catch { return ''; }
+}
+
+/**
+ * Write content to a life domain kernel file.
+ * Used by the dashboard to allow editing profile fields directly.
+ */
+export function writeLifeDomain(domain: string, content: string): void {
+  const validDomains = ['me', 'goals', 'health', 'finance', 'learning'];
+  if (!validDomains.includes(domain)) throw new Error(`Invalid domain: ${domain}`);
+  const keyFile = lifePath(domain, '_kernel', 'key.md');
+  fs.mkdirSync(path.dirname(keyFile), { recursive: true });
+  fs.writeFileSync(keyFile, content, 'utf-8');
+}
+
+/**
+ * Read the life log file.
+ */
+export function readLifeLog(): string {
+  try { return fs.readFileSync(LOG_FILE, 'utf-8'); } catch { return ''; }
+}
+
 function todayISO(): string {
   return new Date().toISOString().slice(0, 10); // YYYY-MM-DD
 }

@@ -802,6 +802,11 @@ export async function handleMessage(ctx: Context, message: string, forceVoiceRep
       if (surfacedMemoryIds.length > 0) {
         void evaluateMemoryRelevance(surfacedMemoryIds, surfacedMemorySummaries, message, rawResponse).catch(() => {});
       }
+      // Sync life context: if the user said something life-relevant, append to log.md
+      try {
+        const { appendLifeLog } = await import('./life-commands.js');
+        appendLifeLog(message, rawResponse);
+      } catch { /* life-commands not critical */ }
     }
 
     // Emit assistant response to SSE clients (include routing info)

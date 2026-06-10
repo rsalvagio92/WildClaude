@@ -284,10 +284,39 @@ function renderProfile(container) {
       },
     });
 
-    return card('Life Profile', [
-      domainTabs,
-      el('div.field', { style: 'margin-top:10px' }, [editor]),
-      el('div.btn-row', { style: 'margin-top:10px' }, [save]),
+    // Life log: chat-derived + manual entries (newest first)
+    const logHost = el('div');
+    const loadLog = () => {
+      asyncView(logHost, () => api.get('/api/life/log'), (d) => {
+        const content = (d.content || '').trim();
+        return content
+          ? el('pre.block', { text: content.slice(0, 8000) })
+          : empty('No life log entries yet');
+      });
+    };
+    loadLog();
+    const entryInput = el('textarea', { rows: 2, style: 'width:100%', placeholder: 'Add a note to the life log…' });
+    const addEntry = el('button.btn', {
+      text: 'Add entry',
+      onclick: () => {
+        const entry = entryInput.value.trim();
+        if (!entry) return;
+        action(() => api.post('/api/life/log', { entry }), { ok: 'Entry added' })
+          .then(() => { entryInput.value = ''; loadLog(); });
+      },
+    });
+
+    return el('div', {}, [
+      card('Life Profile', [
+        domainTabs,
+        el('div.field', { style: 'margin-top:10px' }, [editor]),
+        el('div.btn-row', { style: 'margin-top:10px' }, [save]),
+      ]),
+      card('Life Log', [
+        el('div.field', {}, [entryInput]),
+        el('div.btn-row', { style: 'margin-bottom:10px' }, [addEntry]),
+        logHost,
+      ]),
     ]);
   });
 }

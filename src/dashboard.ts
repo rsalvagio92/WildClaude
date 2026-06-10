@@ -1181,6 +1181,30 @@ export function startDashboard(botApi?: Api<RawApi>): void {
     return c.json({ ok: true });
   });
 
+  // ── Life log endpoints ─────────────────────────────────────────────
+
+  app.get('/api/life/log', (c) => {
+    const logFile = path.join(USER_DATA_DIR, 'life', 'me', '_kernel', 'log.md');
+    try {
+      return c.json({ content: fs.readFileSync(logFile, 'utf-8') });
+    } catch {
+      return c.json({ content: '' });
+    }
+  });
+
+  app.post('/api/life/log', async (c) => {
+    const body = await c.req.json<{ entry: string }>();
+    if (!body?.entry?.trim()) return c.json({ error: 'entry required' }, 400);
+    const logFile = path.join(USER_DATA_DIR, 'life', 'me', '_kernel', 'log.md');
+    const today = new Date().toISOString().slice(0, 10);
+    const entry = `### ${today} — dashboard\n${body.entry.trim()}`;
+    let existing = '';
+    try { existing = fs.readFileSync(logFile, 'utf-8'); } catch { /* new file */ }
+    fs.mkdirSync(path.dirname(logFile), { recursive: true });
+    fs.writeFileSync(logFile, existing ? `${entry}\n\n${existing}` : entry + '\n');
+    return c.json({ ok: true });
+  });
+
   // ── Personality endpoints ──────────────────────────────────────────
 
   app.get('/api/personality', (c) => {
