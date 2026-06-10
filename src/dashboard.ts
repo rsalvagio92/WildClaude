@@ -74,7 +74,6 @@ import {
   deletePreset,
   type PersonalityConfig,
 } from './personality.js';
-import { getDashboardHtml } from './dashboard-html.js';
 import { logger } from './logger.js';
 import { USER_DATA_DIR } from './paths.js';
 import { loadUserConfig, saveUserConfig, writeOverlayFile } from './overlay.js';
@@ -124,9 +123,8 @@ export function startDashboard(botApi?: Api<RawApi>): void {
     return c.json({ error: 'Internal server error' }, 500);
   });
 
-  // ── New modular dashboard UI (static assets in dashboard-ui/) ─────────
+  // ── Modular dashboard UI (static assets in dashboard-ui/) ─────────
   // Served at request time from PROJECT_ROOT so no build step is needed.
-  // The legacy single-file dashboard stays available at /legacy as a fallback.
   const UI_DIR = path.join(PROJECT_ROOT, 'dashboard-ui');
   const MIME: Record<string, string> = {
     '.html': 'text/html; charset=utf-8',
@@ -161,17 +159,12 @@ export function startDashboard(botApi?: Api<RawApi>): void {
     }
   };
 
-  const newUiAvailable = fs.existsSync(path.join(UI_DIR, 'index.html'));
-
   app.get('/', (c) => {
-    if (newUiAvailable) {
-      const f = serveUiFile('index.html');
-      if (f) return c.body(f.body as unknown as ArrayBuffer, 200, { 'Content-Type': f.type });
-    }
-    return c.html(getDashboardHtml());
+    const f = serveUiFile('index.html');
+    if (f) return c.body(f.body as unknown as ArrayBuffer, 200, { 'Content-Type': f.type });
+    return c.text('Dashboard UI not found (dashboard-ui/index.html missing).', 500);
   });
   app.get('/dashboard', (c) => c.redirect('/'));
-  app.get('/legacy', (c) => c.html(getDashboardHtml()));
 
   // Static assets for the new UI under /ui/* (no auth — the API behind them is gated).
   app.get('/ui/*', (c) => {

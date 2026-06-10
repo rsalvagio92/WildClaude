@@ -18,8 +18,6 @@ export const MODULES = [
 
   { id: 'builder',    title: 'Dashboards',          icon: '📊', group: 'Ecosystem' },
   { id: 'ecosystem',  title: 'Skills & MCP',        icon: '🧩', group: 'Ecosystem' },
-  { id: 'marketplace',title: 'Marketplace',         icon: '🛒', group: 'Ecosystem' },
-  { id: 'dashboards', title: 'External Dashboards', icon: '🔌', group: 'Ecosystem' },
 
   { id: 'vitals',     title: 'System Vitals',       icon: '📈', group: 'Monitoring' },
   { id: 'traces',     title: 'Trace Inspector',     icon: '🔍', group: 'Monitoring' },

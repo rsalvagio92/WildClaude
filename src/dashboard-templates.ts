@@ -242,4 +242,63 @@ export const DEFAULT_DASHBOARD_TEMPLATES: Template[] = [
       },
     ],
   },
+
+  // ── Connected Services (dev) ───────────────────────────────────────
+  // Pulls live data from your service APIs via the engine's http source.
+  // Set the named secrets in Settings → Secrets; widgets fill in once present.
+  {
+    id: 'connected-services',
+    title: 'Connected Services',
+    icon: '🔌',
+    description: 'Live status from GitHub & Vercel via your API tokens. Set the secrets below to activate.',
+    widgets: [
+      {
+        id: 'setup-note',
+        type: 'note',
+        title: 'Setup',
+        w: 12,
+        config: { markdown: 'Set these in Settings → Secrets, then refresh:\n• GITHUB_TOKEN — a GitHub personal access token (repo + notifications scope)\n• VERCEL_TOKEN — a Vercel access token\n\nWidgets below call those APIs server-side; your tokens never reach the browser.' },
+      },
+      {
+        id: 'github-repos',
+        type: 'table',
+        title: 'GitHub — recently updated repos',
+        w: 12,
+        source: {
+          kind: 'http',
+          url: 'https://api.github.com/user/repos?sort=updated&per_page=10',
+          headers: { Authorization: 'Bearer {{GITHUB_TOKEN}}', 'User-Agent': 'WildClaude', Accept: 'application/vnd.github+json' },
+        },
+        config: {
+          columns: [
+            { key: 'full_name', label: 'Repo' },
+            { key: 'updated_at', label: 'Updated' },
+            { key: 'stargazers_count', label: '★' },
+            { key: 'open_issues_count', label: 'Issues' },
+          ],
+        },
+        refreshSec: 300,
+      },
+      {
+        id: 'vercel-deploys',
+        type: 'table',
+        title: 'Vercel — recent deployments',
+        w: 12,
+        source: {
+          kind: 'http',
+          url: 'https://api.vercel.com/v6/deployments?limit=10',
+          headers: { Authorization: 'Bearer {{VERCEL_TOKEN}}' },
+          jsonPath: 'deployments',
+        },
+        config: {
+          columns: [
+            { key: 'name', label: 'Project' },
+            { key: 'state', label: 'State' },
+            { key: 'url', label: 'URL' },
+          ],
+        },
+        refreshSec: 120,
+      },
+    ],
+  },
 ];
