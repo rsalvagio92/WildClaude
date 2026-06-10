@@ -97,6 +97,21 @@ export const DEFAULT_AUTOMATIONS: AutomationDef[] = [
     cron: '30 3 * * 1',
     description: 'Pulizia file vecchi, lunedì alle 03:30',
   },
+  // ── Nightly self-improvement ──
+  {
+    id: 'auto-self-learn',
+    name: 'Nightly self-learning + backup',
+    prompt: '__internal:self_learn:run',
+    cron: '0 3 * * *',
+    description: 'Backup giornaliero + apprendimento non distruttivo (solo dati utente) alle 03:00',
+  },
+  {
+    id: 'auto-self-improve-code',
+    name: 'Nightly code self-improvement (human-in-the-loop)',
+    prompt: '__internal:self_improve_code:run',
+    cron: '0 2 * * *',
+    description: 'Miglioramento codice su branch isolato (richiede approvazione) alle 02:00 — disattivo finché SELF_IMPROVE_CODE_ENABLED=true',
+  },
 ];
 
 /**

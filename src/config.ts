@@ -230,3 +230,23 @@ export const SKILL_SYNTHESIS_MIN_TOOLS = parseInt(
   10,
 );
 
+// ── Nightly self-improvement ─────────────────────────────────────────
+// Part A — Self-LEARNING: non-destructive, additive. Learns from the user's
+// conversations and builds helpful artifacts (skills, automations, memory,
+// preferences) in USER_DATA_DIR only — never touches the code repo. Backs up
+// daily. Safe to leave on (default true).
+export const SELF_LEARNING_ENABLED =
+  (process.env.SELF_LEARNING_ENABLED ?? 'true').toLowerCase() !== 'false';
+// Cap how many new skills/automations one night can create (runaway guard).
+export const SELF_LEARNING_MAX_NEW = parseInt(process.env.SELF_LEARNING_MAX_NEW || '3', 10);
+// Daily backups retained (older pruned).
+export const BACKUP_RETENTION_DAYS = parseInt(process.env.BACKUP_RETENTION_DAYS || '14', 10);
+
+// Part B — Self-IMPROVEMENT: modifies SOURCE CODE on an isolated branch, gated
+// by typecheck+build+test, and ALWAYS requires human approval before merge.
+// Off by default — opt in explicitly.
+export const SELF_IMPROVE_CODE_ENABLED =
+  (process.env.SELF_IMPROVE_CODE_ENABLED ?? 'false').toLowerCase() === 'true';
+// Max files a single nightly code run may touch.
+export const SELF_IMPROVE_MAX_FILES = parseInt(process.env.SELF_IMPROVE_MAX_FILES || '10', 10);
+

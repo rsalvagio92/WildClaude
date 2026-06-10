@@ -71,6 +71,18 @@ async function handleInternalSentinel(prompt: string, send: Sender): Promise<voi
     await send(`🧹 Cleanup: ${summary}`);
     return;
   }
+  if (prompt === '__internal:self_learn:run') {
+    // Part A — non-destructive nightly learning + daily backup (user data only).
+    const { runSelfLearning } = await import('./self-learning.js');
+    try { await runSelfLearning(send); } catch (err) { logger.warn({ err }, 'self-learning failed'); }
+    return;
+  }
+  if (prompt === '__internal:self_improve_code:run') {
+    // Part B — code self-improvement (gated, human-in-the-loop; opt-in).
+    const { runCodeImprovement } = await import('./self-improvement.js');
+    try { await runCodeImprovement(send); } catch (err) { logger.warn({ err }, 'self-improvement failed'); }
+    return;
+  }
   logger.warn({ prompt }, 'unknown internal sentinel');
 }
 

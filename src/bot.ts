@@ -171,6 +171,7 @@ import { registerLifeCommands } from './life-commands.js';
 import { registerRalphCommand } from './ralph.js';
 import { registerSandboxCommands } from './sandbox/commands.js';
 import { attachProposalNotifier, registerSkillSynthesisCommands } from './skill-synthesis.js';
+import { registerSelfImprovementCommands } from './self-improvement.js';
 import { registerExportCommands } from './trajectory-export.js';
 import { registerSkillImportCommands } from './skill-import.js';
 import { registerMemoryBlockCommands } from './memory-blocks.js';
@@ -1152,6 +1153,8 @@ export function createBot(): Bot {
     { command: 'lock', description: 'Lock session (PIN)' },
     { command: 'personality', description: 'Personality style — /personality [preset]' },
     { command: 'caveman', description: 'Toggle ultra-terse caveman mode' },
+    { command: 'selflearn', description: 'Run nightly self-learning + backup now' },
+    { command: 'selfimprove', description: 'Review/approve code self-improvement' },
   ];
   const skillCommands = discoverSkillCommands();
   const allCommands = [...builtInCommands, ...skillCommands].slice(0, 100); // Telegram limit: 100 commands
@@ -1597,6 +1600,9 @@ export function createBot(): Bot {
   // /skill_accept, /skill_reject — auto-skill synthesis approval.
   // On accept, refresh the command menu so the skill is usable immediately.
   registerSkillSynthesisCommands(bot, isAuthorised, refreshBotCommands);
+
+  // /selfimprove (code, human-in-the-loop) + /selflearn (user-data, additive)
+  registerSelfImprovementCommands(bot, isAuthorised);
 
   // /export trajectories — JSONL export for fine-tuning / analysis
   registerExportCommands(bot, isAuthorised);
