@@ -117,8 +117,11 @@ export async function exportTrajectories(opts: ExportOptions = {}): Promise<Expo
 
   const where: string[] = [];
   const params: unknown[] = [];
-  if (opts.since !== undefined) { where.push('created_at >= ?'); params.push(opts.since); }
-  if (opts.until !== undefined) { where.push('created_at <= ?'); params.push(opts.until); }
+  // ExportOptions.since/until are ms epoch (public contract), but
+  // conversation_log.created_at is stored in SECONDS — convert at the query
+  // boundary, otherwise comparing ms against seconds excludes every row.
+  if (opts.since !== undefined) { where.push('created_at >= ?'); params.push(Math.floor(opts.since / 1000)); }
+  if (opts.until !== undefined) { where.push('created_at <= ?'); params.push(Math.ceil(opts.until / 1000)); }
   if (opts.chatId) { where.push('chat_id = ?'); params.push(opts.chatId); }
   const sql = [
     `SELECT id, chat_id, session_id, role, content, created_at, agent_id`,
