@@ -181,8 +181,17 @@ export async function runCodeImprovement(send: (text: string) => Promise<void>):
   }
 
   // ── GATE: typecheck → build → test ──
+  // The test gate (vitest) needs DB_ENCRYPTION_KEY. The service may hold it only
+  // in .env (read via readEnvFile, not process.env), so inject it explicitly so
+  // the gate isn't a false-negative.
+  const { readEnvFile } = await import('./env.js');
+  const gateEnv = { ...process.env };
+  if (!gateEnv.DB_ENCRYPTION_KEY) {
+    const v = readEnvFile(['DB_ENCRYPTION_KEY']).DB_ENCRYPTION_KEY;
+    gateEnv.DB_ENCRYPTION_KEY = v || '0000000000000000000000000000000000000000000000000000000000000000';
+  }
   const gate = (cmd: string): boolean => {
-    const r = spawnSync(cmd, { cwd: WORKTREE_DIR, shell: true, timeout: GATE_TIMEOUT_MS, env: process.env, stdio: 'pipe' });
+    const r = spawnSync(cmd, { cwd: WORKTREE_DIR, shell: true, timeout: GATE_TIMEOUT_MS, env: gateEnv, stdio: 'pipe' });
     return r.status === 0;
   };
   await send('🛠️ Code self-improvement: changes made, running typecheck + build + test…');
