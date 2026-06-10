@@ -81,20 +81,92 @@ export function listEvalFiles(): string[] {
     .map((f) => path.join(EVALS_DIR, f));
 }
 
-export function loadEval(filePath: string): EvalDefinition {
-  const raw = fs.readFileSync(filePath, 'utf8');
-  const parsed = filePath.endsWith('.json')
-    ? (JSON.parse(raw) as unknown)
-    : (yaml.load(raw) as unknown);
-  if (!parsed || typeof parsed !== 'object') {
-    throw new Error(`Eval file ${filePath} did not parse to an object`);
-  }
+export function validateEvalObject(parsed: unknown, label = 'eval'): EvalDefinition {
+  if (!parsed || typeof parsed !== 'object') throw new Error(`${label} did not parse to an object`);
   const def = parsed as Partial<EvalDefinition>;
-  if (typeof def.name !== 'string') throw new Error(`Eval ${filePath} missing 'name'`);
-  if (!Array.isArray(def.cases) || def.cases.length === 0) {
-    throw new Error(`Eval ${filePath} has no cases`);
+  if (typeof def.name !== 'string') throw new Error(`${label} missing 'name'`);
+  if (!Array.isArray(def.cases) || def.cases.length === 0) throw new Error(`${label} has no cases`);
+  for (const [i, c] of def.cases.entries()) {
+    if (!c || typeof (c as EvalCase).prompt !== 'string') throw new Error(`${label}: case ${i + 1} missing 'prompt'`);
   }
   return def as EvalDefinition;
+}
+
+export function loadEval(filePath: string): EvalDefinition {
+  const raw = fs.readFileSync(filePath, 'utf8');
+  const parsed = filePath.endsWith('.json') ? (JSON.parse(raw) as unknown) : (yaml.load(raw) as unknown);
+  return validateEvalObject(parsed, `Eval ${filePath}`);
+}
+
+// ── Authoring (create / edit / delete / generate) ────────────────────
+
+const slugifyName = (s: string) => (s || 'eval').toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 50) || 'eval';
+
+export function getEvalRaw(name: string): { file: string; content: string } | null {
+  const file = listEvalFiles().find((f) => path.basename(f).replace(/\.[^.]+$/, '') === name || path.basename(f) === name);
+  if (!file) return null;
+  return { file: path.basename(file), content: fs.readFileSync(file, 'utf8') };
+}
+
+export function validateEvalContent(content: string): { ok: boolean; def?: EvalDefinition; error?: string } {
+  try {
+    const parsed = yaml.load(content);
+    return { ok: true, def: validateEvalObject(parsed, 'eval') };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+export function saveEval(content: string, name?: string): { ok: boolean; file?: string; error?: string } {
+  const v = validateEvalContent(content);
+  if (!v.ok || !v.def) return { ok: false, error: v.error };
+  fs.mkdirSync(EVALS_DIR, { recursive: true });
+  const slug = slugifyName(name || v.def.name);
+  const file = path.join(EVALS_DIR, `${slug}.yaml`);
+  fs.writeFileSync(file, content, 'utf8');
+  return { ok: true, file: path.basename(file) };
+}
+
+export function deleteEvalFile(name: string): boolean {
+  const file = listEvalFiles().find((f) => path.basename(f).replace(/\.[^.]+$/, '') === name || path.basename(f) === name);
+  if (!file) return false;
+  try { fs.unlinkSync(file); return true; } catch { return false; }
+}
+
+const EVAL_GEN_PROMPT = (request: string) => `Design a WildClaude eval (declarative agent test cases) for this request and output ONLY YAML — no prose, no code fence.
+
+Request: "${request}"
+
+YAML schema:
+name: kebab-or-words
+description: one line
+# model: optional model override
+cases:
+  - prompt: the message to send the agent
+    expect:
+      contains: ["substring that must appear"]      # optional
+      contains_any: ["either", "or"]                  # optional
+      not_contains: ["must not appear"]               # optional
+      tools: ["tool_name"]                            # optional — tools that must be used
+      min_length: 20                                  # optional
+      max_length: 2000                                # optional
+
+Rules: 2-5 realistic cases; every case needs a prompt and at least one expectation; keep assertions robust (avoid brittle exact matches).`;
+
+export async function generateEval(request: string): Promise<{ ok: boolean; content?: string; error?: string }> {
+  try {
+    const { runAgent } = await import('./agent.js');
+    const { MODELS } = await import('./models.js');
+    const result = await runAgent(EVAL_GEN_PROMPT(request), undefined, () => {}, undefined, MODELS.sonnet);
+    let raw = (result.text || '').trim();
+    const fence = raw.match(/```(?:ya?ml)?\s*([\s\S]*?)```/);
+    if (fence) raw = fence[1].trim();
+    const v = validateEvalContent(raw);
+    if (!v.ok) return { ok: false, error: 'Generated eval was invalid: ' + v.error };
+    return { ok: true, content: raw };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : 'generation failed' };
+  }
 }
 
 // ── Grading ──────────────────────────────────────────────────────────

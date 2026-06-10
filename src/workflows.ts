@@ -87,21 +87,21 @@ export function listWorkflowFiles(): string[] {
     .map((f) => path.join(WORKFLOWS_DIR, f));
 }
 
-export function loadWorkflow(filePath: string): WorkflowDefinition {
-  const raw = fs.readFileSync(filePath, 'utf8');
-  const parsed = filePath.endsWith('.json') ? JSON.parse(raw) : yaml.load(raw);
+/** Validate a parsed workflow object (name/steps/deps/cycles). Throws on error. */
+export function validateWorkflowObject(parsed: unknown, label = 'workflow'): WorkflowDefinition {
   const def = parsed as Partial<WorkflowDefinition>;
-  if (typeof def.name !== 'string') throw new Error(`Workflow ${filePath} missing 'name'`);
-  if (!Array.isArray(def.steps) || def.steps.length === 0) throw new Error(`Workflow ${filePath} has no steps`);
+  if (!def || typeof def !== 'object') throw new Error(`${label} did not parse to an object`);
+  if (typeof def.name !== 'string') throw new Error(`${label} missing 'name'`);
+  if (!Array.isArray(def.steps) || def.steps.length === 0) throw new Error(`${label} has no steps`);
   const ids = new Set<string>();
   for (const s of def.steps) {
-    if (typeof s.id !== 'string') throw new Error(`Workflow ${filePath}: step missing id`);
-    if (ids.has(s.id)) throw new Error(`Workflow ${filePath}: duplicate step id ${s.id}`);
+    if (typeof s.id !== 'string') throw new Error(`${label}: step missing id`);
+    if (ids.has(s.id)) throw new Error(`${label}: duplicate step id ${s.id}`);
     ids.add(s.id);
   }
   for (const s of def.steps) {
     for (const dep of s.depends_on ?? []) {
-      if (!ids.has(dep)) throw new Error(`Workflow ${filePath}: step ${s.id} depends on unknown ${dep}`);
+      if (!ids.has(dep)) throw new Error(`${label}: step ${s.id} depends on unknown ${dep}`);
     }
   }
   // Cycle detection via DFS
@@ -109,13 +109,89 @@ export function loadWorkflow(filePath: string): WorkflowDefinition {
   const byId = new Map(def.steps.map((s) => [s.id, s]));
   const dfs = (id: string): void => {
     if (visited.get(id) === 'done') return;
-    if (visited.get(id) === 'visiting') throw new Error(`Workflow ${filePath}: cycle through step ${id}`);
+    if (visited.get(id) === 'visiting') throw new Error(`${label}: cycle through step ${id}`);
     visited.set(id, 'visiting');
     for (const dep of byId.get(id)!.depends_on ?? []) dfs(dep);
     visited.set(id, 'done');
   };
   for (const s of def.steps) dfs(s.id);
   return def as WorkflowDefinition;
+}
+
+export function loadWorkflow(filePath: string): WorkflowDefinition {
+  const raw = fs.readFileSync(filePath, 'utf8');
+  const parsed = filePath.endsWith('.json') ? JSON.parse(raw) : yaml.load(raw);
+  return validateWorkflowObject(parsed, `Workflow ${filePath}`);
+}
+
+// ── Authoring (create / edit / delete / generate) ────────────────────
+
+const slugifyName = (s: string) => (s || 'workflow').toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 50) || 'workflow';
+
+/** Raw file content for an existing workflow, by base name or filename. */
+export function getWorkflowRaw(name: string): { file: string; content: string } | null {
+  const file = listWorkflowFiles().find((f) => path.basename(f).replace(/\.[^.]+$/, '') === name || path.basename(f) === name);
+  if (!file) return null;
+  return { file: path.basename(file), content: fs.readFileSync(file, 'utf8') };
+}
+
+/** Validate YAML/JSON content without writing. Returns the parsed def or an error. */
+export function validateWorkflowContent(content: string): { ok: boolean; def?: WorkflowDefinition; error?: string } {
+  try {
+    const parsed = yaml.load(content); // YAML is a superset of JSON
+    return { ok: true, def: validateWorkflowObject(parsed, 'workflow') };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+/** Validate + write a workflow. `name` only used for a new file's slug. */
+export function saveWorkflow(content: string, name?: string): { ok: boolean; file?: string; error?: string } {
+  const v = validateWorkflowContent(content);
+  if (!v.ok || !v.def) return { ok: false, error: v.error };
+  fs.mkdirSync(WORKFLOWS_DIR, { recursive: true });
+  const slug = slugifyName(name || v.def.name);
+  const file = path.join(WORKFLOWS_DIR, `${slug}.yaml`);
+  fs.writeFileSync(file, content, 'utf8');
+  return { ok: true, file: path.basename(file) };
+}
+
+export function deleteWorkflowFile(name: string): boolean {
+  const file = listWorkflowFiles().find((f) => path.basename(f).replace(/\.[^.]+$/, '') === name || path.basename(f) === name);
+  if (!file) return false;
+  try { fs.unlinkSync(file); return true; } catch { return false; }
+}
+
+const WORKFLOW_GEN_PROMPT = (request: string) => `Design a WildClaude workflow (a DAG of agent steps) for this request and output ONLY YAML — no prose, no code fence.
+
+Request: "${request}"
+
+YAML schema:
+name: kebab-or-words
+description: one line
+steps:
+  - id: step-id
+    agent: <agent id, e.g. researcher | coder | writer | coach>   # optional
+    prompt: what this step should do; reference earlier output with {{other-step.output}}
+    depends_on: [other-step-id]   # optional
+    # telegram: optional message to send when this step runs
+
+Rules: unique step ids; depends_on must reference existing ids; no cycles; 2-6 steps; concrete prompts.`;
+
+export async function generateWorkflow(request: string): Promise<{ ok: boolean; content?: string; error?: string }> {
+  try {
+    const { runAgent } = await import('./agent.js');
+    const { MODELS } = await import('./models.js');
+    const result = await runAgent(WORKFLOW_GEN_PROMPT(request), undefined, () => {}, undefined, MODELS.sonnet);
+    let raw = (result.text || '').trim();
+    const fence = raw.match(/```(?:ya?ml)?\s*([\s\S]*?)```/);
+    if (fence) raw = fence[1].trim();
+    const v = validateWorkflowContent(raw);
+    if (!v.ok) return { ok: false, error: 'Generated workflow was invalid: ' + v.error };
+    return { ok: true, content: raw };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : 'generation failed' };
+  }
 }
 
 // ── Topological order ────────────────────────────────────────────────

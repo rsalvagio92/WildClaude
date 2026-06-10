@@ -2,14 +2,24 @@
 import { api } from '../api.js';
 import {
   el, mount, escapeHtml, asyncView, badge, card,
-  toast, toastErr, modal, empty, truncate, fmtTime, fmtAgo,
+  toast, toastErr, modal, confirmDialog, action, empty, truncate, fmtTime, fmtAgo,
 } from '../ui.js';
+import { openYamlEditor, openYamlGenerate } from '../yaml-authoring.js';
 
 const pctKind = (passed, total) => {
   if (!total) return '';
   const r = passed / total;
   return r === 1 ? 'ok' : r === 0 ? 'err' : 'warn';
 };
+
+const EVAL_TEMPLATE = `name: my-eval
+description: What this eval checks
+cases:
+  - prompt: Ask the agent something representative.
+    expect:
+      contains: ["expected substring"]
+      max_length: 2000
+`;
 
 export default {
   async mount(view) {
@@ -23,7 +33,11 @@ export default {
         el('h3', { text: 'Evals' }),
         el('p.muted', { text: 'Declarative agent test cases — contains / tools / length assertions.' }),
       ]),
-      el('button.btn.btn-sm', { text: '⟳ Refresh', onclick: () => { reloadList(); reloadRuns(); } }),
+      el('div.btn-row', {}, [
+        el('button.btn.btn-accent', { text: '✨ Describe an eval', onclick: () => openYamlGenerate({ kind: 'evals', label: 'an eval', placeholder: 'e.g. "Check the coach agent stays encouraging, gives 3 steps, and never gives medical advice"', reload: () => reloadList() }) }),
+        el('button.btn', { text: '+ New', onclick: () => openYamlEditor({ kind: 'evals', content: EVAL_TEMPLATE, reload: () => reloadList() }) }),
+        el('button.btn.btn-sm', { text: '⟳', onclick: () => { reloadList(); reloadRuns(); } }),
+      ]),
     ]);
     mount(view, head, root);
 
@@ -53,6 +67,13 @@ export default {
             spinner.style.display = 'none';
           }
         });
+        const key = ev.name || ev.file;
+        const editBtn = el('button.btn.btn-sm', { text: 'Edit', onclick: async () => {
+          try { const { content } = await api.get('/api/evals/raw/' + encodeURIComponent(key)); openYamlEditor({ kind: 'evals', name: key, content, reload: () => reloadList() }); }
+          catch (e) { toastErr(e.message); }
+        } });
+        const delBtn = el('button.btn.btn-sm.btn-danger', { text: '✕', title: 'Delete', onclick: () =>
+          confirmDialog(`Delete eval "${key}"?`, () => action(() => api.del('/api/evals/' + encodeURIComponent(key)), { ok: 'Deleted', refresh: () => reloadList() }), { danger: true, confirmText: 'Delete' }) });
         return el('tr', {}, [
           el('td', {}, [
             el('div', { text: ev.name || '(unnamed)' }),
@@ -60,7 +81,7 @@ export default {
             invalid ? el('div.dim', { style: 'font-size:12px;color:var(--err,#e66)', text: '⚠ ' + ev.error }) : null,
           ]),
           el('td', {}, [badge(invalid ? '—' : `${ev.caseCount ?? '?'} cases`)]),
-          el('td', { style: 'text-align:right;white-space:nowrap' }, [runBtn, spinner]),
+          el('td', { style: 'text-align:right;white-space:nowrap' }, [runBtn, spinner, el('span', { style: 'display:inline-block;width:6px' }), editBtn, delBtn]),
         ]);
       });
       return card('Available evals', el('div.table-wrap', {}, [el('table', {}, [

@@ -35,6 +35,11 @@ import {
   loadEval,
   runEval,
   listRecentRuns as listEvalRuns,
+  getEvalRaw,
+  validateEvalContent,
+  saveEval,
+  deleteEvalFile,
+  generateEval,
 } from './evals.js';
 import {
   listWorkflowFiles,
@@ -42,6 +47,11 @@ import {
   runWorkflow,
   listRecentRuns as listWorkflowRuns,
   getRun as getWorkflowRun,
+  getWorkflowRaw,
+  validateWorkflowContent,
+  saveWorkflow,
+  deleteWorkflowFile,
+  generateWorkflow,
 } from './workflows.js';
 import {
   listReflections,
@@ -159,6 +169,31 @@ export function registerHermesRoutes(app: Hono): void {
     return c.json({ runs: listEvalRuns(limit) });
   });
 
+  // Authoring: raw content, create/update, delete, validate, LLM-generate.
+  app.get('/api/evals/raw/:name', (c) => {
+    const raw = getEvalRaw(c.req.param('name'));
+    return raw ? c.json(raw) : c.json({ error: 'not found' }, 404);
+  });
+  app.post('/api/evals', async (c) => {
+    const body = await c.req.json().catch(() => ({})) as { content?: string; name?: string };
+    if (!body.content) return c.json({ error: 'content required' }, 400);
+    const res = saveEval(body.content, body.name);
+    return res.ok ? c.json({ ok: true, file: res.file }, 201) : c.json({ error: res.error }, 422);
+  });
+  app.post('/api/evals/validate', async (c) => {
+    const body = await c.req.json().catch(() => ({})) as { content?: string };
+    const v = validateEvalContent(body.content || '');
+    return c.json({ ok: v.ok, error: v.error });
+  });
+  app.post('/api/evals/generate', async (c) => {
+    const body = await c.req.json().catch(() => ({})) as { prompt?: string };
+    if (!body.prompt) return c.json({ error: 'prompt required' }, 400);
+    const res = await generateEval(body.prompt);
+    return res.ok ? c.json({ content: res.content }) : c.json({ error: res.error }, 422);
+  });
+  app.delete('/api/evals/:name', (c) =>
+    deleteEvalFile(c.req.param('name')) ? c.json({ ok: true }) : c.json({ error: 'not found' }, 404));
+
   // ── Workflows ─────────────────────────────────────────────────────
   app.get('/api/workflows', (c) => {
     const files = listWorkflowFiles();
@@ -197,6 +232,31 @@ export function registerHermesRoutes(app: Hono): void {
     if (!run) return c.json({ error: 'not found' }, 404);
     return c.json(run);
   });
+
+  // Authoring: raw content, create/update, delete, validate, LLM-generate.
+  app.get('/api/workflows/raw/:name', (c) => {
+    const raw = getWorkflowRaw(c.req.param('name'));
+    return raw ? c.json(raw) : c.json({ error: 'not found' }, 404);
+  });
+  app.post('/api/workflows', async (c) => {
+    const body = await c.req.json().catch(() => ({})) as { content?: string; name?: string };
+    if (!body.content) return c.json({ error: 'content required' }, 400);
+    const res = saveWorkflow(body.content, body.name);
+    return res.ok ? c.json({ ok: true, file: res.file }, 201) : c.json({ error: res.error }, 422);
+  });
+  app.post('/api/workflows/validate', async (c) => {
+    const body = await c.req.json().catch(() => ({})) as { content?: string };
+    const v = validateWorkflowContent(body.content || '');
+    return c.json({ ok: v.ok, error: v.error });
+  });
+  app.post('/api/workflows/generate', async (c) => {
+    const body = await c.req.json().catch(() => ({})) as { prompt?: string };
+    if (!body.prompt) return c.json({ error: 'prompt required' }, 400);
+    const res = await generateWorkflow(body.prompt);
+    return res.ok ? c.json({ content: res.content }) : c.json({ error: res.error }, 422);
+  });
+  app.delete('/api/workflows/:name', (c) =>
+    deleteWorkflowFile(c.req.param('name')) ? c.json({ ok: true }) : c.json({ error: 'not found' }, 404));
 
   // ── Reflection ────────────────────────────────────────────────────
   app.get('/api/reflections', (c) => {

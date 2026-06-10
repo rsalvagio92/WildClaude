@@ -2,12 +2,25 @@
 import { api } from '../api.js';
 import {
   el, mount, clear, escapeHtml, asyncView, badge, card,
-  toast, toastErr, modal, empty, loading, errbox, fmtTime, fmtAgo, truncate,
+  toast, toastOk, toastErr, modal, confirmDialog, action, empty, loading, errbox, fmtTime, fmtAgo, truncate,
 } from '../ui.js';
+import { openYamlEditor, openYamlGenerate } from '../yaml-authoring.js';
 
 const statusKind = (s) => ({
   completed: 'ok', failed: 'err', running: 'warn', skipped: 'warn', pending: '',
 }[s] || '');
+
+const WF_TEMPLATE = `name: my-workflow
+description: What this workflow does
+steps:
+  - id: research
+    agent: researcher
+    prompt: Research the topic and list key findings.
+  - id: summary
+    agent: writer
+    prompt: Write a short summary of {{research.output}}.
+    depends_on: [research]
+`;
 
 export default {
   async mount(view) {
@@ -21,7 +34,11 @@ export default {
         el('h3', { text: 'Workflows' }),
         el('p.muted', { text: 'Declarative YAML DAGs in your data dir — run multi-step agent pipelines.' }),
       ]),
-      el('button.btn.btn-sm', { text: '⟳ Refresh', onclick: () => { reloadList(); reloadRuns(); } }),
+      el('div.btn-row', {}, [
+        el('button.btn.btn-accent', { text: '✨ Describe a workflow', onclick: () => openYamlGenerate({ kind: 'workflows', label: 'a workflow', placeholder: 'e.g. "Research a topic, draft a summary, then post it to me on Telegram"', reload: () => reloadList() }) }),
+        el('button.btn', { text: '+ New', onclick: () => openYamlEditor({ kind: 'workflows', content: WF_TEMPLATE, reload: () => reloadList() }) }),
+        el('button.btn.btn-sm', { text: '⟳', onclick: () => { reloadList(); reloadRuns(); } }),
+      ]),
     ]);
     mount(view, head, root);
 
@@ -50,6 +67,13 @@ export default {
             spinner.style.display = 'none';
           }
         });
+        const key = w.name || w.file;
+        const editBtn = el('button.btn.btn-sm', { text: 'Edit', onclick: async () => {
+          try { const { content } = await api.get('/api/workflows/raw/' + encodeURIComponent(key)); openYamlEditor({ kind: 'workflows', name: key, content, reload: () => reloadList() }); }
+          catch (e) { toastErr(e.message); }
+        } });
+        const delBtn = el('button.btn.btn-sm.btn-danger', { text: '✕', title: 'Delete', onclick: () =>
+          confirmDialog(`Delete workflow "${key}"?`, () => action(() => api.del('/api/workflows/' + encodeURIComponent(key)), { ok: 'Deleted', refresh: () => reloadList() }), { danger: true, confirmText: 'Delete' }) });
         return el('tr', {}, [
           el('td', {}, [
             el('div', { text: w.name || '(unnamed)' }),
@@ -57,7 +81,7 @@ export default {
             invalid ? el('div.dim', { style: 'font-size:12px;color:var(--err,#e66)', text: '⚠ ' + w.error }) : null,
           ]),
           el('td', {}, [badge(invalid ? '—' : `${w.stepCount ?? '?'} steps`)]),
-          el('td', { style: 'text-align:right;white-space:nowrap' }, [runBtn, spinner]),
+          el('td', { style: 'text-align:right;white-space:nowrap' }, [runBtn, spinner, el('span', { style: 'display:inline-block;width:6px' }), editBtn, delBtn]),
         ]);
       });
       return card('Available workflows', el('div.table-wrap', {}, [el('table', {}, [
