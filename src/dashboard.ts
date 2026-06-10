@@ -2,11 +2,13 @@ import { Api, RawApi } from 'grammy';
 import { Hono } from 'hono';
 import { streamSSE } from 'hono/streaming';
 import { serve } from '@hono/node-server';
+import { createServer as createHttpsServer } from 'node:https';
 
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { AGENT_ID, ALLOWED_CHAT_ID, DASHBOARD_PORT, DASHBOARD_TOKEN, DASHBOARD_HOST, PROJECT_ROOT, STORE_DIR, WHATSAPP_ENABLED, SLACK_USER_TOKEN, CONTEXT_LIMIT, agentDefaultModel } from './config.js';
+import { AGENT_ID, ALLOWED_CHAT_ID, DASHBOARD_PORT, DASHBOARD_TOKEN, DASHBOARD_HOST, DASHBOARD_HTTPS, PROJECT_ROOT, STORE_DIR, WHATSAPP_ENABLED, SLACK_USER_TOKEN, CONTEXT_LIMIT, agentDefaultModel } from './config.js';
+import { getOrCreateDashboardCert } from './dashboard-tls.js';
 import crypto from 'crypto';
 import {
   getAllScheduledTasks,
@@ -1755,6 +1757,22 @@ export function startDashboard(botApi?: Api<RawApi>): void {
 
   // ── Project containers (metadata, KB, agent reference, active-project) ──
   registerProjectRoutes(app);
+
+  // HTTPS (self-signed) when requested — needed for browser mic / voice over LAN.
+  if (DASHBOARD_HTTPS) {
+    const tls = getOrCreateDashboardCert(DASHBOARD_HOST);
+    if (tls) {
+      serve({
+        fetch: app.fetch,
+        port: DASHBOARD_PORT,
+        hostname: DASHBOARD_HOST,
+        createServer: createHttpsServer,
+        serverOptions: { key: tls.key, cert: tls.cert },
+      }, () => logger.info({ port: DASHBOARD_PORT, host: DASHBOARD_HOST, tls: true }, 'Dashboard server running (HTTPS)'));
+      return;
+    }
+    logger.warn('DASHBOARD_HTTPS=true but no certificate available — serving HTTP');
+  }
 
   serve({ fetch: app.fetch, port: DASHBOARD_PORT, hostname: DASHBOARD_HOST }, () => {
     logger.info({ port: DASHBOARD_PORT, host: DASHBOARD_HOST }, 'Dashboard server running');

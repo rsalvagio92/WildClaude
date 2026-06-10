@@ -20,6 +20,7 @@ import {
   DASHBOARD_PORT,
   DASHBOARD_TOKEN,
   DASHBOARD_URL,
+  DASHBOARD_HTTPS,
   MAX_MESSAGE_LENGTH,
   activeBotToken,
   agentDefaultModel,
@@ -1497,7 +1498,7 @@ export function createBot(): Bot {
       return;
     }
     const chatIdStr = ctx.chat!.id.toString();
-    const base = DASHBOARD_URL || `http://localhost:${DASHBOARD_PORT}`;
+    const base = DASHBOARD_URL || `${DASHBOARD_HTTPS ? 'https' : 'http'}://localhost:${DASHBOARD_PORT}`;
     const url = `${base}/?token=${DASHBOARD_TOKEN}&chatId=${chatIdStr}`;
     await ctx.reply(`<a href="${url}">Open Dashboard</a>`, { parse_mode: 'HTML' });
   });
@@ -1516,7 +1517,7 @@ export function createBot(): Bot {
       const { generateDashboard } = await import('./dashboards-v2.js');
       const res = await generateDashboard(prompt);
       if (!res.ok || !res.spec) { await ctx.reply(`Could not build it: ${res.error || 'unknown error'}`); return; }
-      const base = DASHBOARD_URL || `http://localhost:${DASHBOARD_PORT}`;
+      const base = DASHBOARD_URL || `${DASHBOARD_HTTPS ? 'https' : 'http'}://localhost:${DASHBOARD_PORT}`;
       const link = DASHBOARD_TOKEN
         ? `\n\n<a href="${base}/?token=${DASHBOARD_TOKEN}#/builder?id=${res.spec.id}">Open it</a>`
         : '';
@@ -1534,7 +1535,7 @@ export function createBot(): Bot {
     if (await replyIfLocked(ctx)) return;
     const arg = ctx.match?.trim() || '';
     const { listDashboards, refineDashboard } = await import('./dashboards-v2.js');
-    const base = DASHBOARD_URL || `http://localhost:${DASHBOARD_PORT}`;
+    const base = DASHBOARD_URL || `${DASHBOARD_HTTPS ? 'https' : 'http'}://localhost:${DASHBOARD_PORT}`;
 
     const space = arg.indexOf(' ');
     if (!arg || space === -1) {

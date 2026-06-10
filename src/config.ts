@@ -24,6 +24,7 @@ const envConfig = readEnvFile([
   'IDLE_LOCK_MINUTES',
   'EMERGENCY_KILL_PHRASE',
   'DASHBOARD_HOST',
+  'DASHBOARD_HTTPS',
 ]);
 
 // ── Multi-agent support ──────────────────────────────────────────────
@@ -159,6 +160,11 @@ export const DASHBOARD_URL =
   process.env.DASHBOARD_URL || envConfig.DASHBOARD_URL || '';
 export const DASHBOARD_HOST =
   process.env.DASHBOARD_HOST || envConfig.DASHBOARD_HOST || '0.0.0.0';
+// Serve the dashboard over HTTPS (self-signed) so browser features that require
+// a secure context — microphone / Web Speech voice input — work over the LAN.
+// A self-signed cert is auto-generated and cached in USER_DATA_DIR on first run.
+export const DASHBOARD_HTTPS =
+  (process.env.DASHBOARD_HTTPS || envConfig.DASHBOARD_HTTPS || '').toLowerCase() === 'true';
 
 // Database encryption key (SQLCipher). Required for encrypted database access.
 export const DB_ENCRYPTION_KEY =
