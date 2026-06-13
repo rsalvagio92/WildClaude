@@ -105,7 +105,7 @@ async function deployToWB3(
 
     // SSH WB3: pull + build + restart
     await send('🚀 Deploying to WB3 (canary)…');
-    const sshCmd = `ssh ${WB3_HOST} 'cd ${WB3_PATH} && git pull origin ${baseBranch} && npm install && npm run build && systemctl restart --user wildclaude'`;
+    const sshCmd = `ssh ${WB3_HOST} 'cd ${WB3_PATH} && git pull origin ${baseBranch} && npm install && npm run build && sudo systemctl restart wildclaude'`;
     try {
       execSync(sshCmd, { timeout: 5 * 60 * 1000, stdio: 'pipe' });
     } catch (err) {
@@ -123,7 +123,7 @@ async function deployToWB3(
       `<pre>${diffstat.replace(/</g, '&lt;')}</pre>\n\n` +
       `🧪 WB3 is running the improved version. Verify it's stable, then upgrade prod:\n` +
       `<code>wildclaude upgrade</code>\n\n` +
-      `To rollback WB3: <code>cd ~/WildClaude && git reset --hard HEAD~1 && systemctl restart --user wildclaude</code>`,
+      `To rollback WB3: <code>cd ~/WildClaude && git reset --hard HEAD~1 && sudo systemctl restart wildclaude</code>`,
     );
     logger.info({ branch, files: filesChanged }, 'self-improve: deployed to WB3');
     return 'deployed to WB3';
