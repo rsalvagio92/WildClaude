@@ -34,7 +34,8 @@ export interface AgentFailureSample {
 
 export function findStrugglingAgents(days = 7, minTasks = 3, minFailRate = 0.3): AgentFailureSample[] {
   const sinceMs = Date.now() - days * 24 * 3600 * 1000;
-  const rows = getDb().prepare(
+  // Try mission_tasks first (for orchestrator/delegate runs), fall back to conversation_log
+  let rows = getDb().prepare(
     `SELECT assigned_agent AS agentId,
             COUNT(*) AS total,
             SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS failed
@@ -44,10 +45,49 @@ export function findStrugglingAgents(days = 7, minTasks = 3, minFailRate = 0.3):
       HAVING total >= ? AND (CAST(failed AS REAL) / total) >= ?`,
   ).all(sinceMs, minTasks, minFailRate) as Array<{ agentId: string; total: number; failed: number }>;
 
+  // If mission_tasks is empty, use conversation_log with error heuristics
+  if (rows.length === 0) {
+    const allAgents = getDb().prepare(
+      `SELECT agent_id, COUNT(*) AS total FROM conversation_log
+       WHERE created_at >= ? AND agent_id IS NOT NULL AND role = 'assistant'
+       GROUP BY agent_id HAVING total >= ?`,
+    ).all(sinceMs, minTasks) as Array<{ agent_id: string; total: number }>;
+
+    // Count responses with error keywords as "failures"
+    rows = allAgents
+      .map((a) => {
+        const failed = getDb().prepare(
+          `SELECT COUNT(*) AS cnt FROM conversation_log
+           WHERE agent_id = ? AND created_at >= ? AND role = 'assistant'
+           AND (content LIKE '%error%' OR content LIKE '%failed%' OR content LIKE '%unable%' OR content LIKE '%exception%')`,
+        ).get(a.agent_id, sinceMs) as { cnt: number };
+        return {
+          agentId: a.agent_id,
+          total: a.total,
+          failed: failed.cnt,
+        };
+      })
+      .filter((r) => r.total >= minTasks && r.failed / r.total >= minFailRate);
+  }
+
   return rows.map((r) => {
-    const errs = getDb().prepare(
-      `SELECT error FROM mission_tasks WHERE assigned_agent = ? AND status = 'failed' AND created_at >= ? AND error IS NOT NULL LIMIT 5`,
-    ).all(r.agentId, sinceMs) as Array<{ error: string }>;
+    let errs: Array<{ error: string }> = [];
+    // Try mission_tasks first
+    try {
+      errs = getDb().prepare(
+        `SELECT error FROM mission_tasks WHERE assigned_agent = ? AND status = 'failed' AND created_at >= ? AND error IS NOT NULL LIMIT 5`,
+      ).all(r.agentId, sinceMs) as Array<{ error: string }>;
+    } catch {
+      // Fall back to conversation_log error snippets
+      const samples = getDb().prepare(
+        `SELECT content FROM conversation_log WHERE agent_id = ? AND created_at >= ? AND role = 'assistant'
+         AND (content LIKE '%error%' OR content LIKE '%failed%' OR content LIKE '%unable%') LIMIT 5`,
+      ).all(r.agentId, sinceMs) as Array<{ content: string }>;
+      errs = samples.map((s) => ({
+        error: s.content.substring(0, 250),
+      }));
+    }
+
     return {
       agentId: r.agentId,
       totalTasks: r.total,
