@@ -1,5 +1,5 @@
 /**
- * Part B — Nightly self-IMPROVEMENT of the SOURCE CODE (human-in-the-loop).
+ * Part B — Nightly self-IMPROVEMENT of the SOURCE CODE.
  *
  * Off by default (SELF_IMPROVE_CODE_ENABLED). When enabled, each night it:
  *   1. Gathers code-level signals (errors, failed runs, eval failures).
@@ -9,11 +9,12 @@
  *      small features / polish the frontend.
  *   4. GATES the result on `typecheck + build + test` — changes are discarded
  *      unless all three pass.
- *   5. On green, commits to the branch and records a PENDING proposal, then
- *      pings the owner. It NEVER merges or deploys on its own.
- *
- * The owner reviews and decides: `/selfimprove approve` merges the branch into
- * the running branch (then restart to apply); `/selfimprove reject` discards it.
+ *   5. On green, commits to the branch and either:
+ *      a) Creates a PENDING PROPOSAL (human-in-the-loop) for manual review.
+ *         Owner reviews via `/selfimprove review` and approves with `/selfimprove approve`.
+ *      b) Auto-deploys to WB3 (canary/test) if SELF_IMPROVE_AUTO_DEPLOY_WB3=true.
+ *         Merges → pushes → SSHes WB3 to pull+build+restart.
+ *         Prod remains on stable version; owner promotes via `wildclaude upgrade` after WB3 validation.
  */
 
 import fs from 'fs';
@@ -23,7 +24,7 @@ import { execSync, spawnSync } from 'child_process';
 import { runAgent } from './agent.js';
 import { MODELS } from './models.js';
 import { logger } from './logger.js';
-import { PROJECT_ROOT, SELF_IMPROVE_CODE_ENABLED, SELF_IMPROVE_MAX_FILES } from './config.js';
+import { PROJECT_ROOT, SELF_IMPROVE_CODE_ENABLED, SELF_IMPROVE_MAX_FILES, SELF_IMPROVE_AUTO_DEPLOY_WB3 } from './config.js';
 import { USER_DATA_DIR } from './paths.js';
 import { getRecentBlockedActions, getAuditLog } from './db.js';
 
@@ -78,6 +79,59 @@ function gatherSignals(): string {
     if (audit.length) lines.push('Recent error-ish audit entries:\n' + audit.slice(0, 10).map((e) => `- ${e.action}: ${(e.detail || '').slice(0, 120)}`).join('\n'));
   } catch { /* */ }
   return lines.join('\n\n') || '(no specific error signals — look for general correctness, robustness, and frontend polish opportunities)';
+}
+
+/**
+ * Deploy approved self-improvement to WB3 (test/canary).
+ * Merges the auto branch into the base branch, pushes to origin,
+ * then SSHes to WB3 to pull + build + restart.
+ */
+async function deployToWB3(
+  send: (text: string) => Promise<void>,
+  branch: string,
+  baseBranch: string,
+  summary: string,
+  diffstat: string,
+  filesChanged: number,
+): Promise<string> {
+  const WB3_HOST = 'gighy@100.104.55.77';
+  const WB3_PATH = '/home/gighy/WildClaude';
+
+  try {
+    // Merge auto branch into base, push to origin
+    await send('🚀 Self-improvement approved: merging to origin…');
+    git(`merge --no-ff ${branch} -m "auto(self-improve): deploy to WB3 canary\n\n${summary.slice(0, 400)}"`);
+    git(`push origin ${baseBranch}`);
+
+    // SSH WB3: pull + build + restart
+    await send('🚀 Deploying to WB3 (canary)…');
+    const sshCmd = `ssh ${WB3_HOST} 'cd ${WB3_PATH} && git pull origin ${baseBranch} && npm install && npm run build && systemctl restart --user wildclaude'`;
+    try {
+      execSync(sshCmd, { timeout: 5 * 60 * 1000, stdio: 'pipe' });
+    } catch (err) {
+      await send(`⚠️ WB3 deployment failed: ${err instanceof Error ? err.message.slice(0, 200) : String(err)}`);
+      return 'wb3 deploy failed';
+    }
+
+    // Cleanup the branch on origin
+    gitSafe(`push origin --delete ${branch}`);
+    gitSafe(`branch -D ${branch}`);
+
+    await send(
+      `✅ <b>Self-improvement deployed to WB3 (canary)</b>\n\n` +
+      `<b>Summary:</b>\n${summary.slice(0, 500)}\n\n` +
+      `<pre>${diffstat.replace(/</g, '&lt;')}</pre>\n\n` +
+      `🧪 WB3 is running the improved version. Verify it's stable, then upgrade prod:\n` +
+      `<code>wildclaude upgrade</code>\n\n` +
+      `To rollback WB3: <code>cd ~/WildClaude && git reset --hard HEAD~1 && systemctl restart --user wildclaude</code>`,
+    );
+    logger.info({ branch, files: filesChanged }, 'self-improve: deployed to WB3');
+    return 'deployed to WB3';
+  } catch (err) {
+    logger.warn({ err }, 'self-improve: deploy failed');
+    await send(`❌ Self-improvement deploy failed: ${err instanceof Error ? err.message.slice(0, 200) : String(err)}`);
+    return 'deploy failed';
+  }
 }
 
 const IMPROVE_PROMPT = (signals: string) => `You are improving the WildClaude codebase autonomously overnight. You are working in an ISOLATED git worktree; your changes will be GATED by \`npm run typecheck\`, \`npm run build\`, and \`npm test\`, then reviewed by a human before merge. If the gate fails, your work is discarded — so keep changes small, correct, and verifiable.
@@ -238,6 +292,11 @@ export async function runCodeImprovement(send: (text: string) => Promise<void>):
   // Remove the worktree dir but KEEP the branch for review/merge.
   gitSafe(`worktree remove --force "${WORKTREE_DIR}"`);
   gitSafe('worktree prune');
+
+  // ── Auto-deploy to WB3 OR save pending proposal for human review ──
+  if (SELF_IMPROVE_AUTO_DEPLOY_WB3) {
+    return await deployToWB3(send, branch, baseBranch, agentSummary, diffstat, files.length);
+  }
 
   const proposal: CodeProposal = { branch, worktree: WORKTREE_DIR, summary: agentSummary, diffstat, filesChanged: files.length, createdAt: Date.now() };
   savePending(proposal);

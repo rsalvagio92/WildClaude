@@ -261,4 +261,9 @@ export const SELF_IMPROVE_CODE_ENABLED =
   (process.env.SELF_IMPROVE_CODE_ENABLED ?? 'false').toLowerCase() === 'true';
 // Max files a single nightly code run may touch.
 export const SELF_IMPROVE_MAX_FILES = parseInt(process.env.SELF_IMPROVE_MAX_FILES || '10', 10);
+// Auto-deploy approved self-improvement proposals to WB3 (test/canary).
+// When enabled + gates green, commits → pushes → deploys to WB3 (no human approval gate).
+// Prod remains on stable version; user promotes via `wildclaude upgrade` after WB3 validation.
+export const SELF_IMPROVE_AUTO_DEPLOY_WB3 =
+  (process.env.SELF_IMPROVE_AUTO_DEPLOY_WB3 ?? 'false').toLowerCase() === 'true';
 
