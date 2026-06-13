@@ -796,8 +796,10 @@ export async function handleMessage(ctx: Context, message: string, forceVoiceRep
     // assistant works with full project context (repos, env, KB, secret availability).
     let projectRef = '';
     try {
-      const { getActiveProject, buildProjectReference } = await import('./projects.js');
-      const activeId = getActiveProject(String(chatId));
+      const { getActiveProjectOrInfer, buildProjectReference } = await import('./projects.js');
+      // Infer the active project when none is explicitly set, so a fresh session
+      // still loads project context (KB, plan, status) by default.
+      const activeId = getActiveProjectOrInfer(String(chatId));
       if (activeId) projectRef = buildProjectReference(activeId) || '';
     } catch { /* projects optional */ }
     // Knowledge wiki: inject any article whose topic is mentioned (cheap string

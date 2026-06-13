@@ -202,6 +202,20 @@ export function getActiveProject(chatId: string): string | null {
   } catch { return null; }
 }
 
+/**
+ * Active project for a chat, with inference fallback.
+ * If none is explicitly set (e.g. a fresh session that never ran `/project use`),
+ * fall back to the most-recently-updated non-archived project so the assistant
+ * always loads project context (KB, plan, status) by default — instead of
+ * starting cold every session.
+ */
+export function getActiveProjectOrInfer(chatId: string): string | null {
+  const explicit = getActiveProject(chatId);
+  if (explicit) return explicit;
+  const candidates = listProjects().filter((p) => p.status !== 'archived');
+  return candidates[0]?.id || null;
+}
+
 export function setActiveProject(chatId: string, projectId: string | null): void {
   const cfg = loadUserConfig();
   cfg.activeProjects = cfg.activeProjects || {};
