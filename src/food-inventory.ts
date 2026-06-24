@@ -6,7 +6,7 @@
 import fs from 'fs';
 import path from 'path';
 
-import { insertDashboardData } from './db.js';
+import { insertDashboardData, queryDashboardData } from './db.js';
 import { runAgent } from './agent.js';
 import { MODELS } from './models.js';
 import { logger } from './logger.js';
@@ -21,6 +21,7 @@ export interface InventoryItem {
   unit: string;
   category: string;
   action: 'aggiunto' | 'rimosso' | 'finito';
+  price?: number; // prezzo unitario confezione in EUR
 }
 
 /** Returns true if the transcribed voice text is about inventory updates. */
@@ -72,29 +73,40 @@ Leggi (Read) il file immagine e analizza il contenuto.
 
 Restituisci SOLO un JSON array, niente altro:
 [
-  {"item": "pollo", "quantity": 500, "unit": "g", "category": "proteina", "action": "aggiunto"},
-  {"item": "uova", "quantity": 6, "unit": "pz", "category": "proteina", "action": "aggiunto"}
+  {"item": "pollo", "quantity": 500, "unit": "g", "category": "proteina", "action": "aggiunto", "price": 4.99},
+  {"item": "uova", "quantity": 30, "unit": "pz", "category": "proteina", "action": "aggiunto", "price": 7.47}
 ]
 
 Regole generali:
-- Normalizza i nomi degli articoli in ITALIANO, anche se li vedi in tedesco/inglese
-  (es: "Hähnchenbrust" → "petto di pollo", "Haferflocken" → "avena", "Vollmilch" → "latte intero", "Lachs" → "salmone")
+- Normalizza i nomi degli articoli in ITALIANO corretto:
+  Hähnchenbrust → petto di pollo | Hähnchenschenkel → cosce di pollo | Hackfleisch → carne macinata
+  Lachs → salmone | Thunfisch → tonno | Garnelen → gamberi | Surimi → surimi
+  Skyr → skyr | Joghurt → yogurt | Quark → quark | Milch → latte | Käse → formaggio
+  Eier → uova | Haferflocken → avena | Reis → riso | Nudeln → pasta | Brot → pane
+  Spinat → spinaci | Karotten → carote | Paprika → peperone | Tomaten → pomodori
+  Kidneybohnen → fagioli rossi | Hummus → hummus | Olivenöl → olio d'oliva
+  Zucker → zucchero | Sojasauce → salsa di soia | Fruchtsaft → succo di frutta
+  Trauben → uva | Heidelbeeren → mirtilli | Birne → pera | Äpfel → mele
 - category: proteina / carbo / verdura / grasso / latticino / frutta / integratore / altro
 - action è sempre "aggiunto"
+- price: prezzo UNITARIO della singola confezione in EUR (il numero nella colonna prezzo sulla sinistra, prima del xN)
 - SOLO JSON, niente testo prima o dopo
 - Se non trovi alimenti, restituisci []
 
 Se è uno SCONTRINO/RICEVUTA:
-- Leggi ogni riga prodotto — ignora totali, tasse, prezzi, codici negozio
-- CRITICO: la colonna "x2" / "x3" ecc. indica il numero di confezioni acquistate → moltiplica la quantità della singola confezione per quel numero
-  Esempi: "Eier 10 Stück x3" → 30 pz | "Skyr 400g x2" → 800g | "Thunfisch-Filets x2" → 2 pz (o 300g se stimi 150g/lattina)
-- Se non c'è colonna xN, la quantità è 1 confezione
-- Stima la quantità standard della confezione se non indicata (es: 1 Packung Hähnchenbrust = 500g, 1 Karton Eier = 10pz, 1 Dose Thunfisch = 150g)
-- Includi solo articoli alimentari, non prodotti non-food (detersivi, cosmetici, ecc.)
+- Leggi ogni riga prodotto — ignora totali, tasse, servizio, delivery, codici negozio, sconti
+- CRITICO — colonna xN = numero confezioni acquistate → moltiplica la quantità unitaria per N:
+  "Eier 10 Stück x3" → quantity:30, unit:"pz" | "Skyr 400g x2" → quantity:800, unit:"g"
+  "Hähnchenschenkel 400g x2" → quantity:800, unit:"g" | "Thunfisch x2 (stima 150g/lattina)" → quantity:300, unit:"g"
+- Se non c'è colonna xN → quantità = 1 confezione
+- price = prezzo della SINGOLA confezione (non totale riga)
+- Stima quantità standard se non indicata: 1 Packung Hähnchenbrust=500g, Karton Eier=10pz, Dose Thunfisch=150g, Forelle=80g, Lachs-Stäbchen=224g
+- Includi solo articoli alimentari, escludi: detersivi, cosmetici, delivery fee, service fee, sconti
 
 Se è una FOTO DI FRIGO/DISPENSA:
 - Identifica tutti gli alimenti visibili
-- Stima quantità ragionevoli basandoti sulla confezione visibile`;
+- Stima quantità ragionevoli basandoti sulla confezione visibile
+- price: 0 (non visibile)`;
 
   try {
     const result = await runAgent(prompt, undefined, () => undefined, undefined, MODELS.haiku);
@@ -108,18 +120,39 @@ Se è una FOTO DI FRIGO/DISPENSA:
   }
 }
 
-/** Insert items into the inventory and return a confirmation string. */
+/** Insert items into the inventory, skipping duplicates logged in the last 6 hours. */
 export function saveInventoryItems(items: InventoryItem[]): string {
   if (!items.length) return '';
+
+  // Load items logged in the last 6 hours for dedup
+  const recent = queryDashboardData(FOOD_DASHBOARD_ID, FOOD_WIDGET_ID, 1)
+    .filter(r => r.created_at >= Math.floor(Date.now() / 1000) - 6 * 3600);
+  const recentKeys = new Set(recent.map(r => `${String(r.data.item).toLowerCase()}|${r.data.quantity}|${r.data.unit}`));
+
+  const inserted: InventoryItem[] = [];
+  const skipped: InventoryItem[] = [];
+
   for (const item of items) {
-    insertDashboardData(FOOD_DASHBOARD_ID, FOOD_WIDGET_ID, item as unknown as Record<string, unknown>);
+    const key = `${item.item.toLowerCase()}|${item.quantity}|${item.unit}`;
+    if (recentKeys.has(key)) {
+      skipped.push(item);
+    } else {
+      insertDashboardData(FOOD_DASHBOARD_ID, FOOD_WIDGET_ID, item as unknown as Record<string, unknown>);
+      inserted.push(item);
+    }
   }
-  const lines = items.map(i => {
+
+  if (!inserted.length) return `⚠️ *Scontrino già caricato* — ${skipped.length} articoli ignorati (duplicati nelle ultime 6h).`;
+
+  const lines = inserted.map(i => {
+    const priceStr = i.price && i.price > 0 ? ` — €${i.price.toFixed(2)}` : '';
     if (i.action === 'finito') return `\u{1F5D1}️ ${i.item} — finito`;
     if (i.action === 'rimosso') return `➖ ${i.quantity}${i.unit} ${i.item} rimosso`;
-    return `✅ ${i.quantity}${i.unit} ${i.item} (${i.category})`;
+    return `✅ ${i.quantity}${i.unit} ${i.item} (${i.category})${priceStr}`;
   });
-  return `\u{1F4E6} *Inventario aggiornato:*\n${lines.join('\n')}`;
+
+  const skipNote = skipped.length > 0 ? `\n_${skipped.length} duplicati ignorati_` : '';
+  return `\u{1F4E6} *Inventario aggiornato:*\n${lines.join('\n')}${skipNote}`;
 }
 
 /** Create the Cucina & Fitness dashboard spec if it doesn't exist yet. Called at bot startup. */
