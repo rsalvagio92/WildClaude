@@ -86,9 +86,11 @@ Regole generali:
 
 Se è uno SCONTRINO/RICEVUTA:
 - Leggi ogni riga prodotto — ignora totali, tasse, prezzi, codici negozio
+- CRITICO: la colonna "x2" / "x3" ecc. indica il numero di confezioni acquistate → moltiplica la quantità della singola confezione per quel numero
+  Esempi: "Eier 10 Stück x3" → 30 pz | "Skyr 400g x2" → 800g | "Thunfisch-Filets x2" → 2 pz (o 300g se stimi 150g/lattina)
+- Se non c'è colonna xN, la quantità è 1 confezione
 - Stima la quantità standard della confezione se non indicata (es: 1 Packung Hähnchenbrust = 500g, 1 Karton Eier = 10pz, 1 Dose Thunfisch = 150g)
 - Includi solo articoli alimentari, non prodotti non-food (detersivi, cosmetici, ecc.)
-- Quantità sullo scontrino = numero confezioni comprate (es: "2 Hähnchenbrust" = 1000g totali)
 
 Se è una FOTO DI FRIGO/DISPENSA:
 - Identifica tutti gli alimenti visibili
