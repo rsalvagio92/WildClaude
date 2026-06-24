@@ -151,6 +151,10 @@ async function main(): Promise<void> {
   initDatabase();
   logger.info('Database ready');
 
+  // Seed the food & fitness dashboard spec on first run
+  const { ensureFoodDashboard } = await import('./food-inventory.js');
+  ensureFoodDashboard();
+
   // Replay messages that were buffered (but unprocessed) when the previous
   // process died — they get injected as context on the next message.
   {

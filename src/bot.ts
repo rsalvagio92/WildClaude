@@ -170,6 +170,7 @@ import {
 import { getSlackConversations, getSlackMessages, sendSlackMessage, SlackConversation } from './slack.js';
 import { getWaChats, getWaChatMessages, sendWhatsAppMessage, WaChat } from './whatsapp.js';
 import { registerLifeCommands } from './life-commands.js';
+import { isInventoryVoice, parseInventoryFromText, parseInventoryFromPhoto, saveInventoryItems } from './food-inventory.js';
 import { registerRalphCommand } from './ralph.js';
 import { registerSandboxCommands } from './sandbox/commands.js';
 import { attachProposalNotifier, registerSkillSynthesisCommands } from './skill-synthesis.js';
@@ -1187,6 +1188,12 @@ export function createBot(): Bot {
     { command: 'focus', description: 'Start 25-min focus session' },
     { command: 'journal', description: 'Quick reflection' },
     { command: 'review', description: 'Weekly review scorecard' },
+    // Food inventory
+    { command: 'ho_comprato', description: 'Aggiungi articolo all\'inventario' },
+    { command: 'finito', description: 'Rimuovi articolo dall\'inventario' },
+    { command: 'inventario', description: 'Mostra inventario cucina' },
+    { command: 'spesa', description: 'Genera lista della spesa settimanale' },
+    { command: 'ricette', description: 'Suggerisci ricette dall\'inventario' },
     // Memory
     { command: 'memory', description: 'Search memories' },
     { command: 'remember', description: 'Save a memory — /remember <text>' },
@@ -1884,21 +1891,25 @@ export function createBot(): Bot {
 
   // /caveman — toggle ultra-terse caveman mode on/off. Remembers the preset
   // that was active before, and restores it when toggled off.
+  // Resets the session so the new personality takes effect immediately.
   bot.command('caveman', async (ctx) => {
     if (await replyIfLocked(ctx)) return;
     const { loadUserConfig: loadCfg, saveUserConfig: saveCfg } = await import('./overlay.js');
     const config = loadCfg() as Record<string, unknown> & { personality?: { preset?: string }; previousPreset?: string };
     const current = config.personality?.preset || 'default';
+    const chatId = String(ctx.chat.id);
 
     if (current === 'caveman') {
       const restore = config.previousPreset || 'default';
       const preset = loadPreset(restore) ?? loadPreset('default')!;
       saveCfg({ ...config, personality: { ...preset.config, preset: preset.id }, previousPreset: undefined });
-      await ctx.reply(`Caveman mode OFF. Back to <b>${preset.name}</b>.`, { parse_mode: 'HTML' });
+      clearSession(chatId);
+      await ctx.reply(`Caveman mode OFF. Back to <b>${preset.name}</b>. Session reset.`, { parse_mode: 'HTML' });
     } else {
       const caveman = loadPreset('caveman')!;
       saveCfg({ ...config, personality: { ...caveman.config, preset: 'caveman' }, previousPreset: current });
-      await ctx.reply('Caveman mode ON. Me talk short now. /caveman again to turn off.');
+      clearSession(chatId);
+      await ctx.reply('Caveman mode ON. Me talk short now. (Session reset — next message will be caveman style.) /caveman again to turn off.');
     }
   });
 
@@ -2025,7 +2036,7 @@ export function createBot(): Bot {
   });
 
   // Text messages — and any slash commands not owned by this bot (skills, e.g. /todo /gmail)
-  const OWN_COMMANDS = new Set(['/start', '/help', '/newchat', '/respin', '/voice', '/model', '/memory', '/forget', '/pin', '/unpin', '/chatid', '/wa', '/slack', '/dashboard', '/stop', '/agents', '/delegate', '/lock', '/status', '/ralph', '/morning', '/evening', '/goals', '/focus', '/journal', '/review', '/remember', '/reflect', '/secrets', '/set_secret', '/delete_secret', '/create_skill', '/create_agent', '/evolution', '/mcp', '/mcp_install', '/mcp_remove', '/import', '/personality', '/learnlesson', '/mission', '/missions']);
+  const OWN_COMMANDS = new Set(['/start', '/help', '/newchat', '/respin', '/voice', '/model', '/memory', '/forget', '/pin', '/unpin', '/chatid', '/wa', '/slack', '/dashboard', '/stop', '/agents', '/delegate', '/lock', '/status', '/ralph', '/morning', '/evening', '/goals', '/focus', '/journal', '/review', '/remember', '/reflect', '/secrets', '/set_secret', '/delete_secret', '/create_skill', '/create_agent', '/evolution', '/mcp', '/mcp_install', '/mcp_remove', '/import', '/personality', '/learnlesson', '/mission', '/missions', '/ho_comprato', '/finito', '/inventario', '/spesa', '/ricette']);
   bot.on('message:text', async (ctx) => {
     const text = ctx.message.text;
     const chatIdStr = ctx.chat!.id.toString();
@@ -2296,6 +2307,16 @@ export function createBot(): Bot {
       const fileId = ctx.message.voice.file_id;
       const localPath = await downloadTelegramFile(activeBotToken, fileId, UPLOADS_DIR);
       const transcribed = await transcribeAudio(localPath);
+      // Auto-detect inventory voice updates
+      if (isInventoryVoice(transcribed)) {
+        const items = await parseInventoryFromText(transcribed);
+        if (items.length > 0) {
+          const confirmation = saveInventoryItems(items);
+          await ctx.reply(confirmation, { parse_mode: 'Markdown' });
+          return;
+        }
+        // No items parsed → fall through to normal handler
+      }
       // Only reply with voice if explicitly requested — otherwise execute and respond in text
       const wantsVoiceBack = /\b(respond (with|via|in) voice|send (me )?(a )?voice( note| back)?|voice reply|reply (with|via) voice)\b/i.test(transcribed);
       const chatIdStr = ctx.chat!.id.toString();
@@ -2320,8 +2341,28 @@ export function createBot(): Bot {
     try {
       const photo = ctx.message.photo[ctx.message.photo.length - 1];
       const localPath = await downloadMedia(activeBotToken, photo.file_id, 'photo.jpg');
-      const msg = buildPhotoMessage(localPath, ctx.message.caption ?? undefined);
+      const captionRaw = ctx.message.caption ?? '';
+      const caption = captionRaw.toLowerCase();
       const chatIdStr = chatId.toString();
+      // Try inventory parser: explicit keywords OR empty caption (parser returns [] for non-food → falls through)
+      const captionEmpty = captionRaw.trim() === '';
+      const inventoryKeywords = /\b(inventario|frigo|frigorifero|dispensa|scontrino|ricevuta|spesa|kassenbon|kassenzettel|aggiorna|ho comprato|ho fatto la spesa|rewe|aldi|lidl|edeka|kaufland|penny|netto|tegut|supermercato|supermarket|ho preso|acquistato|alimentari)\b/i;
+      const inventoryCaption = inventoryKeywords.test(caption) || captionEmpty;
+      if (inventoryCaption) {
+        void ctx.react('👀').catch(() => {});
+        const items = await parseInventoryFromPhoto(localPath);
+        if (items.length > 0) {
+          const confirmation = saveInventoryItems(items);
+          await ctx.reply(confirmation, { parse_mode: 'Markdown' });
+          return;
+        }
+        // Explicit keyword but no food found → report; empty caption → fall through to generic
+        if (!captionEmpty) {
+          await ctx.reply('Non riesco a identificare alimenti nella foto. Prova con una foto più chiara.');
+          return;
+        }
+      }
+      const msg = buildPhotoMessage(localPath, ctx.message.caption ?? undefined);
       void ctx.react('👀').catch(() => {});
       messageQueue.enqueue(chatIdStr, () => handleMessage(ctx, msg));
     } catch (err) {
