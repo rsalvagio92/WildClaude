@@ -251,13 +251,28 @@ async function transcribeAudioLocal(filePath: string): Promise<string> {
 // ── STT: Cascade (Groq → whisper-cpp local) ─────────────────────────────────
 
 /**
- * Transcribe an audio file using the first available provider.
- * Priority: Groq Whisper (cloud) → whisper-cpp (local).
+ * Transcribe an audio file.
+ *
+ * STT_PROVIDER env controls routing:
+ *   groq  — Groq Whisper API only (error if GROQ_API_KEY missing)
+ *   local — whisper-cpp only (error if WHISPER_MODEL_PATH missing)
+ *   auto  — (default) Groq first, local fallback
  */
 export async function transcribeAudio(filePath: string): Promise<string> {
-  const env = readEnvFile(['GROQ_API_KEY', 'WHISPER_MODEL_PATH']);
+  const env = readEnvFile(['GROQ_API_KEY', 'WHISPER_MODEL_PATH', 'STT_PROVIDER']);
+  const provider = (env.STT_PROVIDER || 'auto').toLowerCase();
 
-  // Try Groq first (cloud, fast)
+  if (provider === 'groq') {
+    if (!env.GROQ_API_KEY) throw new Error('STT_PROVIDER=groq but GROQ_API_KEY not set');
+    return transcribeAudioGroq(filePath);
+  }
+
+  if (provider === 'local') {
+    if (!env.WHISPER_MODEL_PATH) throw new Error('STT_PROVIDER=local but WHISPER_MODEL_PATH not set');
+    return transcribeAudioLocal(filePath);
+  }
+
+  // auto: Groq first, local fallback
   if (env.GROQ_API_KEY) {
     try {
       return await transcribeAudioGroq(filePath);
@@ -266,8 +281,7 @@ export async function transcribeAudio(filePath: string): Promise<string> {
     }
   }
 
-  // Fallback: local whisper-cpp
-  return await transcribeAudioLocal(filePath);
+  return transcribeAudioLocal(filePath);
 }
 
 // ── TTS: ElevenLabs (primary) ────────────────────────────────────────────────
