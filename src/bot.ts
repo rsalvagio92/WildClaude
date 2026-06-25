@@ -1213,6 +1213,8 @@ export function createBot(): Bot {
     { command: 'evolution', description: 'View evolution log' },
     // Ralph
     { command: 'ralph', description: 'Autonomous dev loop — /ralph <goal>' },
+    // Meeting recorder
+    { command: 'meeting', description: 'Meeting notes — /meeting start|stop [title]' },
     // Utility
     { command: 'respin', description: 'Reload recent context' },
     { command: 'voice', description: 'Toggle voice mode' },
