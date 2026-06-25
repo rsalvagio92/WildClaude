@@ -152,8 +152,15 @@ export async function registerWithPrimary(): Promise<boolean> {
 
   const config = loadRoleConfig();
   try {
+    const { collectTelemetry } = await import('./machine-registry.js');
+    const telemetry = await collectTelemetry();
+    const pkg = JSON.parse(require('fs').readFileSync('package.json', 'utf-8'));
+
     await request('POST', '/api/sync/register', {
       machineId: config.machineId,
+      version: pkg.version,
+      telemetry,
+      sessionCount: 0, // TODO: count active sessions from db
     });
     logger.info({ machineId: config.machineId }, 'Registered with primary');
     return true;

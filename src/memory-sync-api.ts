@@ -189,13 +189,16 @@ export function registerSyncRoutes(app: Hono, syncToken?: string): void {
   // POST /api/sync/register (secondaries auto-register on first connection)
   app.post('/api/sync/register', gate, async (c) => {
     const body = await c.req.json() as any;
-    const { machineId } = body;
+    const { machineId, version, telemetry, sessionCount } = body;
 
     if (!machineId) {
       return c.json({ error: 'Missing machineId' }, 400);
     }
 
+    // Import after declaration to avoid circular deps
+    const { updateMachineStatus } = await import('./machine-registry.js');
     registerMachine(machineId);
+    updateMachineStatus(machineId, true, undefined, telemetry, version, sessionCount);
     return c.json({ registered: true });
   });
 
