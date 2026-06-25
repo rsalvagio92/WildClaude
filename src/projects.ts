@@ -202,6 +202,13 @@ export function getActiveProject(chatId: string): string | null {
   } catch { return null; }
 }
 
+export function getActiveProjectOrInfer(chatId: string): string | null {
+  const explicit = getActiveProject(chatId);
+  if (explicit) return explicit;
+  const candidates = listProjects().filter((p) => p.status !== 'archived');
+  return candidates[0]?.id || null;
+}
+
 export function setActiveProject(chatId: string, projectId: string | null): void {
   const cfg = loadUserConfig();
   cfg.activeProjects = cfg.activeProjects || {};
