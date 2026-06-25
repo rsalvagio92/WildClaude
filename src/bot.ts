@@ -171,6 +171,7 @@ import { getSlackConversations, getSlackMessages, sendSlackMessage, SlackConvers
 import { getWaChats, getWaChatMessages, sendWhatsAppMessage, WaChat } from './whatsapp.js';
 import { registerLifeCommands } from './life-commands.js';
 import { isInventoryVoice, parseInventoryFromText, parseInventoryFromPhoto, saveInventoryItems } from './food-inventory.js';
+import { startMeeting, getMeeting, addMeetingChunk, finalizeMeeting } from './meeting-recorder.js';
 import { registerRalphCommand } from './ralph.js';
 import { registerSandboxCommands } from './sandbox/commands.js';
 import { attachProposalNotifier, registerSkillSynthesisCommands } from './skill-synthesis.js';
@@ -1834,6 +1835,34 @@ export function createBot(): Bot {
   // ── Life management commands (/morning, /evening, /goals, /focus, /journal, /review, /remember, /reflect)
   registerLifeCommands(bot);
 
+  // ── Meeting recorder (/meeting start, /meeting add, /meeting stop)
+  bot.command('meeting', async (ctx) => {
+    if (await replyIfLocked(ctx)) return;
+    const args = ctx.match?.trim().split(/\s+/) || [];
+    const subcommand = args[0]?.toLowerCase();
+    const chatId = ctx.chat!.id.toString();
+
+    if (subcommand === 'start') {
+      const title = args.slice(1).join(' ') || 'Riunione';
+      const session = startMeeting(chatId, title);
+      await ctx.reply(`🎙️ *Sessione riunione avviata*\n\n📌 ${session.title}\n⏱️ ${new Date(session.startedAt).toLocaleTimeString('it-IT')}\n\nInvia voice notes con /meeting o mandami file audio per la trascrizione.`, { parse_mode: 'Markdown' });
+      return;
+    }
+
+    if (subcommand === 'stop') {
+      const result = await finalizeMeeting(chatId);
+      if (!result) {
+        await ctx.reply('❌ Nessuna sessione attiva o vuota.');
+        return;
+      }
+      const output = `📋 *Riepilogo riunione*\n\n${result.summary}\n\n🎯 *Azioni* (${result.actionItems.length}):\n${result.actionItems.map(a => `• ${a}`).join('\n') || '(nessuna)'}\n\n✅ *Decisioni* (${result.decisions.length}):\n${result.decisions.map(d => `• ${d}`).join('\n') || '(nessuna)'}`;
+      await ctx.reply(output, { parse_mode: 'Markdown' });
+      return;
+    }
+
+    await ctx.reply('Uso: `/meeting start [titolo]` per iniziare, `/meeting stop` per concludere.');
+  });
+
   // ── Secrets management (/secrets, /set_secret, /delete_secret)
   registerSecretsCommands(bot);
 
@@ -2307,6 +2336,19 @@ export function createBot(): Bot {
       const fileId = ctx.message.voice.file_id;
       const localPath = await downloadTelegramFile(activeBotToken, fileId, UPLOADS_DIR);
       const transcribed = await transcribeAudio(localPath);
+      const chatIdStr = ctx.chat!.id.toString();
+      const durationSecs = (ctx.message.voice.duration || 0) as number;
+
+      // Check if there's an active meeting session
+      const meeting = getMeeting(chatIdStr);
+      if (meeting) {
+        await addMeetingChunk(chatIdStr, transcribed, durationSecs);
+        const chunkCount = meeting.chunks.length;
+        const totalDuration = meeting.chunks.reduce((sum, c) => sum + c.duration, 0);
+        await ctx.reply(`✅ Chunk ${chunkCount} aggiunto (${Math.round(totalDuration / 60)}min totali)`, { parse_mode: 'Markdown' });
+        return;
+      }
+
       // Auto-detect inventory voice updates
       if (isInventoryVoice(transcribed)) {
         const items = await parseInventoryFromText(transcribed);
@@ -2319,7 +2361,6 @@ export function createBot(): Bot {
       }
       // Only reply with voice if explicitly requested — otherwise execute and respond in text
       const wantsVoiceBack = /\b(respond (with|via|in) voice|send (me )?(a )?voice( note| back)?|voice reply|reply (with|via) voice)\b/i.test(transcribed);
-      const chatIdStr = ctx.chat!.id.toString();
       messageQueue.enqueue(chatIdStr, () => handleMessage(ctx, `[Voice transcribed]: ${transcribed}`, wantsVoiceBack));
     } catch (err) {
       logger.error({ err }, 'Voice transcription failed');
