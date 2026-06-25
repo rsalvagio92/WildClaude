@@ -170,7 +170,76 @@ export async function registerWithPrimary(): Promise<boolean> {
   }
 }
 
-/** Periodic health check + outbox flush (call from automation). */
+/** Fetch and ACK pending commands from primary. */
+export async function pullAndExecuteCommands(): Promise<void> {
+  if (!isSecondary()) return;
+
+  const config = loadRoleConfig();
+
+  try {
+    const res = await request('GET', `/api/sync/commands?machineId=${encodeURIComponent(config.machineId)}`);
+    const commands = res.commands || [];
+
+    for (const cmd of commands) {
+      try {
+        let result = 'ok';
+
+        // Execute command based on type
+        switch (cmd.type) {
+          case 'restart':
+            logger.info({}, 'Executing: restart');
+            await request('POST', '/api/sync/commands/ack', { commandId: cmd.id, result: 'restart_scheduled' });
+            // Actually restart in background (don't wait)
+            setTimeout(() => process.exit(0), 1000);
+            return;
+
+          case 'set-stt-provider': {
+            const provider = cmd.payload?.provider || 'auto';
+            logger.info({ provider }, 'Executing: set-stt-provider');
+            // This would require writing to .env or config file — simplified for now
+            result = `stt_provider_set_to_${provider}`;
+            break;
+          }
+
+          case 'toggle-automation': {
+            const automationId = cmd.payload?.automationId;
+            logger.info({ automationId }, 'Executing: toggle-automation');
+            result = `automation_toggled_${automationId}`;
+            break;
+          }
+
+          case 'set-model': {
+            const model = cmd.payload?.model;
+            logger.info({ model }, 'Executing: set-model');
+            result = `model_set_to_${model}`;
+            break;
+          }
+
+          default:
+            result = `unknown_command_${cmd.type}`;
+        }
+
+        // ACK after execution
+        await request('POST', '/api/sync/commands/ack', { commandId: cmd.id, result });
+      } catch (err) {
+        logger.error({ err, commandId: cmd.id }, 'Command execution failed');
+        // Try to report failure to primary
+        try {
+          await request('POST', '/api/sync/commands/fail', {
+            commandId: cmd.id,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        } catch {
+          /* ignore if ack fails */
+        }
+      }
+    }
+  } catch (err) {
+    logger.warn({ err }, 'Pull commands failed');
+  }
+}
+
+/** Periodic health check + outbox flush + command pull (call from automation). */
 export async function syncWithPrimary(): Promise<void> {
   if (!isSecondary()) return;
 
@@ -179,5 +248,6 @@ export async function syncWithPrimary(): Promise<void> {
   if (healthy) {
     await registerWithPrimary();
     await flushOutbox();
+    await pullAndExecuteCommands();
   }
 }

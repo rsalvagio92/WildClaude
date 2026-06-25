@@ -427,6 +427,19 @@ function createSchema(database: Database.Database): void {
     );
     CREATE INDEX IF NOT EXISTS idx_dashboard_data ON dashboard_data(dashboard_id, widget_id, created_at DESC);
 
+    -- Machine control commands queued by primary, pulled by secondaries
+    CREATE TABLE IF NOT EXISTS machine_commands (
+      id         INTEGER PRIMARY KEY AUTOINCREMENT,
+      target_id  TEXT NOT NULL,
+      type       TEXT NOT NULL,
+      payload    TEXT NOT NULL DEFAULT '{}',
+      status     TEXT NOT NULL DEFAULT 'pending',
+      created_at INTEGER NOT NULL,
+      executed_at INTEGER,
+      result     TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_machine_commands_target_status ON machine_commands(target_id, status, created_at DESC);
+
     CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
       summary,
       raw_text,

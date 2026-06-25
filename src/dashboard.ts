@@ -564,6 +564,42 @@ export function startDashboard(botApi?: Api<RawApi>): void {
     }
   });
 
+  // Multi-machine: enqueue a command to a secondary (primary only)
+  app.post('/api/machines/:machineId/command', async (c) => {
+    const machineId = c.req.param('machineId');
+    const body = await c.req.json() as any;
+    const { type, payload } = body;
+
+    if (!type) {
+      return c.json({ error: 'Missing command type' }, 400);
+    }
+
+    try {
+      const { enqueueCommand } = await import('./machine-commands.js');
+      const cmdId = enqueueCommand(machineId, type as any, payload || {});
+      logger.info({ machineId, type, cmdId }, 'Command enqueued from dashboard');
+      return c.json({ commandId: cmdId, queued: true });
+    } catch (err) {
+      logger.error({ err, machineId, type }, 'Failed to enqueue command');
+      return c.json({ error: 'Enqueue failed' }, 500);
+    }
+  });
+
+  // Multi-machine: get command history for a secondary (for dashboard)
+  app.get('/api/machines/:machineId/commands', async (c) => {
+    const machineId = c.req.param('machineId');
+    const limit = parseInt(c.req.query('limit') || '50', 10);
+
+    try {
+      const { getCommandHistory } = await import('./machine-commands.js');
+      const commands = getCommandHistory(machineId, limit);
+      return c.json({ commands });
+    } catch (err) {
+      logger.error({ err, machineId }, 'Failed to fetch command history');
+      return c.json({ error: 'Fetch failed', commands: [] }, 500);
+    }
+  });
+
   app.get('/api/memories/list', (c) => {
     const chatId = c.req.query('chatId') || ALLOWED_CHAT_ID || '';
     const limit = parseInt(c.req.query('limit') || '50', 10);

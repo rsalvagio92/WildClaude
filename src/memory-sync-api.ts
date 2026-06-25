@@ -226,5 +226,45 @@ export function registerSyncRoutes(app: Hono, syncToken?: string): void {
     }
   });
 
+  // GET /api/sync/commands?machineId=<id> (secondary pulls pending commands)
+  app.get('/api/sync/commands', gate, async (c) => {
+    const machineId = c.req.query('machineId');
+    if (!machineId) {
+      return c.json({ error: 'Missing machineId' }, 400);
+    }
+
+    try {
+      const { getPendingCommands, markCommandSent } = await import('./machine-commands.js');
+      const commands = getPendingCommands(machineId);
+      // Mark all as sent once pulled
+      for (const cmd of commands) {
+        markCommandSent(cmd.id);
+      }
+      return c.json({ commands });
+    } catch (err) {
+      logger.error({ err, machineId }, 'Sync: command fetch failed');
+      return c.json({ error: 'Fetch failed' }, 500);
+    }
+  });
+
+  // POST /api/sync/commands/ack (secondary ACKs executed commands)
+  app.post('/api/sync/commands/ack', gate, async (c) => {
+    const body = await c.req.json() as any;
+    const { commandId, result } = body;
+
+    if (!commandId) {
+      return c.json({ error: 'Missing commandId' }, 400);
+    }
+
+    try {
+      const { ackCommand } = await import('./machine-commands.js');
+      ackCommand(commandId, result);
+      return c.json({ acked: true });
+    } catch (err) {
+      logger.error({ err, commandId }, 'Sync: command ACK failed');
+      return c.json({ error: 'ACK failed' }, 500);
+    }
+  });
+
   logger.info({}, 'Sync API routes registered (primary only)');
 }
