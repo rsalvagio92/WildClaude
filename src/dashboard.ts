@@ -547,6 +547,18 @@ export function startDashboard(botApi?: Api<RawApi>): void {
     return c.json({ topics: getMemoryTopics(chatId) });
   });
 
+  // Multi-machine: list connected secondaries
+  app.get('/api/machines', async (c) => {
+    try {
+      const { getMachines } = await import('./machine-registry.js');
+      const machines = getMachines();
+      return c.json({ machines });
+    } catch (err) {
+      logger.warn({ err }, 'Failed to fetch machines');
+      return c.json({ machines: [] });
+    }
+  });
+
   app.get('/api/memories/list', (c) => {
     const chatId = c.req.query('chatId') || ALLOWED_CHAT_ID || '';
     const limit = parseInt(c.req.query('limit') || '50', 10);

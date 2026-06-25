@@ -123,12 +123,54 @@ export async function flushOutbox(): Promise<{ flushed: number; total: number }>
   }
 }
 
+export async function getRemoteWiki(topic?: string): Promise<any[]> {
+  try {
+    const path = topic ? `/api/sync/wiki?topic=${encodeURIComponent(topic)}` : '/api/sync/wiki';
+    const res = await request('GET', path);
+    if (topic) {
+      return res.article ? [res.article] : [];
+    }
+    return res.articles || [];
+  } catch (err) {
+    logger.warn({ err, topic }, 'Remote wiki fetch failed');
+    return [];
+  }
+}
+
+export async function getRemoteBlocks(scope = 'user'): Promise<any[]> {
+  try {
+    const res = await request('GET', `/api/sync/blocks?scope=${encodeURIComponent(scope)}`);
+    return res.blocks || [];
+  } catch (err) {
+    logger.warn({ err, scope }, 'Remote blocks fetch failed');
+    return [];
+  }
+}
+
+export async function registerWithPrimary(): Promise<boolean> {
+  if (!isSecondary()) return false;
+
+  const config = loadRoleConfig();
+  try {
+    await request('POST', '/api/sync/register', {
+      machineId: config.machineId,
+    });
+    logger.info({ machineId: config.machineId }, 'Registered with primary');
+    return true;
+  } catch (err) {
+    logger.warn({ err }, 'Failed to register with primary');
+    return false;
+  }
+}
+
 /** Periodic health check + outbox flush (call from automation). */
 export async function syncWithPrimary(): Promise<void> {
   if (!isSecondary()) return;
 
+  // Register on first successful connection
   const healthy = await checkPrimaryHealth();
   if (healthy) {
+    await registerWithPrimary();
     await flushOutbox();
   }
 }

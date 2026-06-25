@@ -13,8 +13,9 @@
 import type { Hono } from 'hono';
 import { getDb } from './db.js';
 import { logger } from './logger.js';
-import { isSecondary } from './config-role.js';
+import { isSecondary, loadRoleConfig } from './config-role.js';
 import { listOutbox, removeOutboxEntry, updateOutboxRetry } from './memory-outbox.js';
+import { registerMachine, updateMachineStatus, getMachines } from './machine-registry.js';
 
 const SYNC_TOKEN_HEADER = 'X-Sync-Token';
 
@@ -113,6 +114,39 @@ export function registerSyncRoutes(app: Hono, syncToken?: string): void {
     }
   });
 
+  // GET /api/sync/wiki?topic=<topic> (wiki articles)
+  app.get('/api/sync/wiki', gate, (c) => {
+    const topic = c.req.query('topic');
+    if (!topic) {
+      try {
+        const rows = getDb().prepare(`
+          SELECT id, topic, content, published_at
+          FROM memory_blocks
+          WHERE owner = 'wiki'
+          ORDER BY published_at DESC
+          LIMIT 100
+        `).all() as any[];
+        return c.json({ articles: rows });
+      } catch (err) {
+        logger.error({ err }, 'Sync: wiki fetch failed');
+        return c.json({ error: 'Fetch failed' }, 500);
+      }
+    }
+
+    try {
+      const row = getDb().prepare(`
+        SELECT id, topic, content, published_at
+        FROM memory_blocks
+        WHERE owner = 'wiki' AND topic = ?
+        LIMIT 1
+      `).get(topic) as any;
+      return c.json({ article: row || null });
+    } catch (err) {
+      logger.error({ err, topic }, 'Sync: wiki article fetch failed');
+      return c.json({ error: 'Fetch failed' }, 500);
+    }
+  });
+
   // POST /api/sync/outbox/flush (secondary calls on reconnect)
   app.post('/api/sync/outbox/flush', gate, async (c) => {
     if (isSecondary()) {
@@ -149,6 +183,43 @@ export function registerSyncRoutes(app: Hono, syncToken?: string): void {
       return c.json({ ok: true, memoryCount: memCount });
     } catch {
       return c.json({ ok: false }, 500);
+    }
+  });
+
+  // POST /api/sync/register (secondaries auto-register on first connection)
+  app.post('/api/sync/register', gate, async (c) => {
+    const body = await c.req.json() as any;
+    const { machineId } = body;
+
+    if (!machineId) {
+      return c.json({ error: 'Missing machineId' }, 400);
+    }
+
+    registerMachine(machineId);
+    return c.json({ registered: true });
+  });
+
+  // GET /api/sync/machines (dashboard: list connected secondaries)
+  app.get('/api/sync/machines', (c) => {
+    const machines = getMachines();
+    return c.json({ machines });
+  });
+
+  // GET /api/sync/blocks?scope=<user|session|agent> (editable memory blocks)
+  app.get('/api/sync/blocks', gate, (c) => {
+    const scope = c.req.query('scope') || 'user';
+    try {
+      const rows = getDb().prepare(`
+        SELECT id, scope, content, created_at, updated_at
+        FROM memory_blocks
+        WHERE owner = 'user' AND scope = ?
+        ORDER BY updated_at DESC
+        LIMIT 50
+      `).all(scope) as any[];
+      return c.json({ blocks: rows });
+    } catch (err) {
+      logger.error({ err, scope }, 'Sync: blocks fetch failed');
+      return c.json({ error: 'Fetch failed' }, 500);
     }
   });
 
