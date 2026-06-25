@@ -6,6 +6,7 @@
 
 import os from 'node:os';
 import { logger } from './logger.js';
+import { upsertMachine, loadAllMachines } from './db.js';
 
 export interface MachineTelemetry {
   cpuPercent?: number; // 0-100
@@ -31,17 +32,45 @@ export interface MachineInfo {
 
 const registry = new Map<string, MachineInfo>();
 
+/** Load persisted machines from SQLite into the in-memory registry at startup. */
+export function seedRegistryFromDb(): void {
+  try {
+    const rows = loadAllMachines();
+    for (const row of rows) {
+      registry.set(row.machine_id, {
+        machineId: row.machine_id,
+        primaryUrl: row.primary_url ?? undefined,
+        lastSeen: row.last_seen,
+        status: 'offline', // assume offline until they re-register
+        memoryCount: row.memory_count ?? undefined,
+        sessionCount: row.session_count ?? undefined,
+        version: row.version ?? undefined,
+        telemetry: row.telemetry ? JSON.parse(row.telemetry) : undefined,
+        lastError: row.last_error ?? undefined,
+      });
+    }
+    if (rows.length) logger.info({ count: rows.length }, 'Machine registry seeded from DB');
+  } catch (err) {
+    logger.warn({ err }, 'Could not seed machine registry from DB');
+  }
+}
+
 export function registerMachine(id: string, url?: string): void {
   const existing = registry.get(id);
   const now = Date.now();
 
-  registry.set(id, {
+  const info: MachineInfo = {
     machineId: id,
     primaryUrl: url,
     lastSeen: now,
     status: 'online',
     memoryCount: existing?.memoryCount,
-  });
+    telemetry: existing?.telemetry,
+    version: existing?.version,
+    sessionCount: existing?.sessionCount,
+  };
+  registry.set(id, info);
+  try { upsertMachine({ machineId: id, primaryUrl: url, status: 'online', lastSeen: now, memoryCount: existing?.memoryCount, version: existing?.version, telemetry: existing?.telemetry, sessionCount: existing?.sessionCount }); } catch { /* non-fatal */ }
 
   logger.info({ machineId: id, url }, 'Machine registered');
 }
@@ -68,6 +97,15 @@ export function updateMachineStatus(
   if (version) machine.version = version;
   if (sessionCount !== undefined) machine.sessionCount = sessionCount;
   if (lastError !== undefined) machine.lastError = lastError;
+
+  try {
+    upsertMachine({
+      machineId: id, primaryUrl: machine.primaryUrl, status: machine.status,
+      lastSeen: machine.lastSeen, memoryCount: machine.memoryCount,
+      sessionCount: machine.sessionCount, version: machine.version,
+      telemetry: machine.telemetry, lastError: machine.lastError,
+    });
+  } catch { /* non-fatal */ }
 }
 
 export function getMachines(): MachineInfo[] {

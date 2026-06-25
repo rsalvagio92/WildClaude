@@ -440,6 +440,20 @@ function createSchema(database: Database.Database): void {
     );
     CREATE INDEX IF NOT EXISTS idx_machine_commands_target_status ON machine_commands(target_id, status, created_at DESC);
 
+    -- Persistent registry of connected machines (survives primary restarts)
+    CREATE TABLE IF NOT EXISTS machines (
+      machine_id   TEXT PRIMARY KEY,
+      primary_url  TEXT,
+      status       TEXT NOT NULL DEFAULT 'offline',
+      last_seen    INTEGER NOT NULL,
+      memory_count INTEGER,
+      session_count INTEGER,
+      version      TEXT,
+      telemetry    TEXT,
+      last_error   TEXT,
+      created_at   INTEGER NOT NULL
+    );
+
     CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
       summary,
       raw_text,
@@ -535,6 +549,62 @@ export function searchArchive(chatId: string, query: string, limit = 10): Array<
   return getDb().prepare(
     `SELECT * FROM memory_archive WHERE chat_id = ? AND content LIKE ? ORDER BY archived_at DESC LIMIT ?`
   ).all(chatId, pattern, limit) as any[];
+}
+
+// ── Machine registry persistence ─────────────────────────────────────────────
+
+export interface DbMachineRow {
+  machine_id: string;
+  primary_url: string | null;
+  status: string;
+  last_seen: number;
+  memory_count: number | null;
+  session_count: number | null;
+  version: string | null;
+  telemetry: string | null; // JSON
+  last_error: string | null;
+  created_at: number;
+}
+
+export function upsertMachine(m: {
+  machineId: string;
+  primaryUrl?: string;
+  status: string;
+  lastSeen: number;
+  memoryCount?: number;
+  sessionCount?: number;
+  version?: string;
+  telemetry?: object;
+  lastError?: string;
+}): void {
+  getDb().prepare(`
+    INSERT INTO machines (machine_id, primary_url, status, last_seen, memory_count, session_count, version, telemetry, last_error, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(machine_id) DO UPDATE SET
+      primary_url   = excluded.primary_url,
+      status        = excluded.status,
+      last_seen     = excluded.last_seen,
+      memory_count  = COALESCE(excluded.memory_count, memory_count),
+      session_count = COALESCE(excluded.session_count, session_count),
+      version       = COALESCE(excluded.version, version),
+      telemetry     = COALESCE(excluded.telemetry, telemetry),
+      last_error    = excluded.last_error
+  `).run(
+    m.machineId,
+    m.primaryUrl ?? null,
+    m.status,
+    m.lastSeen,
+    m.memoryCount ?? null,
+    m.sessionCount ?? null,
+    m.version ?? null,
+    m.telemetry ? JSON.stringify(m.telemetry) : null,
+    m.lastError ?? null,
+    m.lastSeen,
+  );
+}
+
+export function loadAllMachines(): DbMachineRow[] {
+  return getDb().prepare(`SELECT * FROM machines ORDER BY last_seen DESC`).all() as DbMachineRow[];
 }
 
 export function initDatabase(): void {

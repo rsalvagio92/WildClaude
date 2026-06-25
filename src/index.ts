@@ -151,6 +151,13 @@ async function main(): Promise<void> {
   initDatabase();
   logger.info('Database ready');
 
+  // Restore secondary machines from DB into in-memory registry (primary only).
+  const { isPrimary } = await import('./config-role.js');
+  if (isPrimary()) {
+    const { seedRegistryFromDb } = await import('./machine-registry.js');
+    seedRegistryFromDb();
+  }
+
   // Seed the food & fitness dashboard spec on first run
   const { ensureFoodDashboard } = await import('./food-inventory.js');
   ensureFoodDashboard();
