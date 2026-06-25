@@ -284,13 +284,10 @@ cmd_upgrade() {
 
   info "Updating from $(echo $current | head -c 7) to $(echo $remote | head -c 7)..."
 
-  # Stop if running
-  local was_running=false
-  if is_running; then
-    was_running=true
-    cmd_stop
-    sleep 1
-  fi
+  # ── Blue-green: validate the new build BEFORE touching the running bot ──
+  # The live process keeps serving Telegram the whole time. We only swap +
+  # restart once a clean build passes a smoke test. A broken build aborts
+  # with the bot still alive on the old code.
 
   # Pull (use reset if pull fails — handles force-pushed history)
   if ! git pull origin master 2>&1 | tail -3; then
@@ -302,17 +299,44 @@ cmd_upgrade() {
   npm install 2>&1 | tail -1
   ok "Dependencies updated"
 
-  # Build
-  npm run build 2>&1 | tail -1
-  ok "Build complete"
-
-  # Restart if was running
-  if [ "$was_running" = true ]; then
-    cmd_start
+  # Clean build into a staging dir (dist.next) — never the live dist.
+  # Clean = no orphaned .js from deleted sources leaking into the bundle.
+  info "Building staging bundle (bot still live)..."
+  rm -rf dist.next
+  if ! npx tsc --outDir dist.next 2>&1 | tail -10; then
+    rm -rf dist.next
+    fail "Build failed — bot left running on current version. Nothing changed."
   fi
+  ok "Staging build complete"
+
+  # Smoke-test the staged bundle: every runtime module must load clean.
+  info "Smoke-testing staging bundle..."
+  if ! node scripts/healthcheck.mjs dist.next 2>&1 | tail -6; then
+    rm -rf dist.next
+    fail "Smoke test failed — bot left running on current version. Nothing changed."
+  fi
+  ok "Smoke test passed"
+
+  # ── Atomic swap + graceful restart ──
+  # SIGTERM (via systemctl restart / cmd_restart) triggers the bot's graceful
+  # drain (finishes in-flight, persists pending queue). Telegram buffers
+  # updates during the brief gap; per-chat sessions resume from SQLite.
+  local was_running=false
+  is_running && was_running=true
+
+  rm -rf dist.old
+  mv dist dist.old 2>/dev/null || true
+  mv dist.next dist
+  ok "Bundle swapped"
+
+  if [ "$was_running" = true ]; then
+    info "Graceful restart (drains in-flight, resumes sessions from SQLite)..."
+    cmd_restart
+  fi
+  rm -rf dist.old
 
   echo ""
-  ok "Upgrade complete!"
+  ok "Upgrade complete! Downtime limited to a single graceful restart."
 }
 
 cmd_logs() {
