@@ -3,6 +3,7 @@
  * Mirrors interface of memory.ts but via HTTP.
  */
 
+import { readFileSync } from 'node:fs';
 import { logger } from './logger.js';
 import { isSecondary, loadRoleConfig } from './config-role.js';
 import { enqueueOutbox, listOutbox, removeOutboxEntry } from './memory-outbox.js';
@@ -154,7 +155,7 @@ export async function registerWithPrimary(): Promise<boolean> {
   try {
     const { collectTelemetry } = await import('./machine-registry.js');
     const telemetry = await collectTelemetry();
-    const pkg = JSON.parse(require('fs').readFileSync('package.json', 'utf-8'));
+    const pkg = JSON.parse(readFileSync('package.json', 'utf-8'));
 
     await request('POST', '/api/sync/register', {
       machineId: config.machineId,

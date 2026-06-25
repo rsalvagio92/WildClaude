@@ -4,6 +4,7 @@
  * Secondaries report telemetry (CPU, RAM, disk, uptime, etc.) with each heartbeat.
  */
 
+import os from 'node:os';
 import { logger } from './logger.js';
 
 export interface MachineTelemetry {
@@ -111,7 +112,7 @@ export async function collectTelemetry(): Promise<MachineTelemetry> {
       const { stdout: loadStr } = await execAsync('uptime');
       const match = loadStr.match(/load average[s]?: ([\d.]+)/);
       if (match) {
-        const numCores = require('os').cpus().length;
+        const numCores = os.cpus().length;
         telemetry.loadAverage = parseFloat(match[1]);
         telemetry.cpuPercent = Math.min(100, (telemetry.loadAverage / numCores) * 100);
       }
@@ -122,7 +123,6 @@ export async function collectTelemetry(): Promise<MachineTelemetry> {
 
   try {
     // RAM usage
-    const os = require('os');
     const totalMem = os.totalmem();
     const freeMem = os.freemem();
     telemetry.ramTotal = Math.round(totalMem / 1024 / 1024);
@@ -152,7 +152,6 @@ export async function collectTelemetry(): Promise<MachineTelemetry> {
 
   try {
     // Uptime
-    const os = require('os');
     telemetry.uptime = Math.round(os.uptime());
   } catch {
     /* ignore */
