@@ -815,6 +815,13 @@ function runMigrations(database: Database.Database): void {
     database.exec(`ALTER TABLE mission_tasks ADD COLUMN next_mission_id TEXT`);
     logger.info('Migration: added next_mission_id to mission_tasks');
   }
+
+  // Multi-machine sync: track which secondary machine a memory came from
+  const memOriginCols = database.prepare(`PRAGMA table_info(memories)`).all() as Array<{ name: string }>;
+  if (!memOriginCols.some(c => c.name === 'origin_machine')) {
+    database.exec(`ALTER TABLE memories ADD COLUMN origin_machine TEXT NOT NULL DEFAULT ''`);
+    logger.info('Migration: added origin_machine column to memories (multi-machine sync)');
+  }
 }
 
 /** @internal - for tests only. Creates a fresh in-memory database. */
