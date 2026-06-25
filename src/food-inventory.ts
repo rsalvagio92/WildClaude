@@ -203,8 +203,25 @@ export function ensureFoodDashboard(): void {
             { key: 'unit', label: 'Unità' },
             { key: 'category', label: 'Categoria' },
             { key: 'action', label: 'Azione' },
+            { key: 'price', label: 'Prezzo (€)' },
           ],
         },
+      },
+      {
+        id: 'spesa-inventario',
+        type: 'metric',
+        title: 'Totale spesa scontrino',
+        w: 4,
+        source: { kind: 'local', field: 'price', agg: 'sum', sinceDays: 1 },
+        config: { unit: '€', format: 'currency', readWidget: 'add-item' },
+      },
+      {
+        id: 'cost-by-category',
+        type: 'table',
+        title: 'Costo per categoria',
+        w: 8,
+        source: { kind: 'local', field: 'price', agg: 'sum', groupBy: 'category', sinceDays: 30 },
+        config: { readWidget: 'add-item', columns: [{ key: 'category', label: 'Categoria' }, { key: 'value', label: 'Totale (€)' }] },
       },
 
       // ── PASTI & MACRO ────────────────────────────────────────────────
