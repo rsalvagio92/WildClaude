@@ -1,5 +1,6 @@
 // Fleet Control — manage connected secondary machines.
 // Shows real-time telemetry, sends commands, shows command history.
+import { api } from '../api.js';
 
 const REFRESH_INTERVAL = 30_000;
 let refreshTimer = null;
@@ -42,6 +43,12 @@ export async function mount(container) {
 
   await renderMachines();
   refreshTimer = setInterval(renderMachines, REFRESH_INTERVAL);
+
+  // Router uses the returned function as cleanup on navigate-away.
+  return () => {
+    if (refreshTimer) clearInterval(refreshTimer);
+    selectedMachine = null;
+  };
 }
 
 // ── Render machine cards ─────────────────────────────────────────────────────
@@ -282,9 +289,4 @@ function formatAgo(ms) {
 
 function esc(str) {
   return String(str ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-}
-
-export function unmount() {
-  if (refreshTimer) clearInterval(refreshTimer);
-  selectedMachine = null;
 }
