@@ -119,6 +119,15 @@ Se è una FOTO DI FRIGO/DISPENSA:
   }
 }
 
+/** Normalize item name to a root form for fuzzy dedup (strips adjectives/variants). */
+function normalizeItemName(name: string): string {
+  return name
+    .toLowerCase()
+    .replace(/\b(bianca?|rosso?|verde|integrale|fritte?|vegan|vegano?|al miele|con mirtilli|ai mirtilli|filetto di|bastoncin[io] di)\b/gi, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 /** Insert items into the inventory, skipping duplicates logged in the last 6 hours. */
 export function saveInventoryItems(items: InventoryItem[]): string {
   if (!items.length) return '';
@@ -126,14 +135,25 @@ export function saveInventoryItems(items: InventoryItem[]): string {
   // Load items logged in the last 6 hours for dedup
   const recent = queryDashboardData(FOOD_DASHBOARD_ID, FOOD_WIDGET_ID, 1)
     .filter(r => r.created_at >= Math.floor(Date.now() / 1000) - 6 * 3600);
-  const recentKeys = new Set(recent.map(r => `${String(r.data.item).toLowerCase()}|${r.data.quantity}|${r.data.unit}`));
+
+  // Fuzzy dedup: match on normalized name + unit + quantity within ±15%
+  const isDuplicate = (item: InventoryItem): boolean => {
+    const normNew = normalizeItemName(item.item);
+    return recent.some(r => {
+      const normExisting = normalizeItemName(String(r.data.item));
+      if (normNew !== normExisting) return false;
+      if (String(r.data.unit) !== item.unit) return false;
+      const existingQty = Number(r.data.quantity);
+      const ratio = existingQty > 0 ? Math.abs(item.quantity - existingQty) / existingQty : 1;
+      return ratio <= 0.15;
+    });
+  };
 
   const inserted: InventoryItem[] = [];
   const skipped: InventoryItem[] = [];
 
   for (const item of items) {
-    const key = `${item.item.toLowerCase()}|${item.quantity}|${item.unit}`;
-    if (recentKeys.has(key)) {
+    if (isDuplicate(item)) {
       skipped.push(item);
     } else {
       insertDashboardData(FOOD_DASHBOARD_ID, FOOD_WIDGET_ID, item as unknown as Record<string, unknown>);
