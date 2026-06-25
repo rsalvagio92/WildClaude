@@ -4,9 +4,13 @@
  * Strategy: Save more, decay naturally. Better to capture too much
  * (SQLite FTS5 handles search) than miss important context.
  * Salience decay (0.95^days) handles cleanup of stale memories.
+ *
+ * Secondary machines: forward ingests to primary via sync client.
  */
 
 import { saveStructuredMemory, getDb } from './db.js';
+import { isSecondary, loadRoleConfig } from './config-role.js';
+import { ingestRemoteMemory } from './memory-sync-client.js';
 
 /**
  * Check if a very similar memory already exists (deduplication).
@@ -195,18 +199,42 @@ export async function ingestConversationTurn(
       return false;
     }
 
-    const memoryId = saveStructuredMemory(
-      chatId,
-      userMessage,
-      summary,
-      entities,
-      topics,
-      importance,
-      'conversation',
-      agentId,
-    );
+    let memoryId: number;
 
-    // Write to .md file for human-readable persistence
+    // Secondary: forward-write to primary
+    if (isSecondary()) {
+      const config = loadRoleConfig();
+      const remoteMem = await ingestRemoteMemory({
+        chatId,
+        rawText: userMessage,
+        summary,
+        entities,
+        topics,
+        importance,
+        source: 'conversation',
+        agentId,
+      });
+      if (remoteMem) {
+        memoryId = parseInt(remoteMem, 10) || 0;
+      } else {
+        // Forward failed, save locally as fallback (outbox handled in sync-client)
+        memoryId = saveStructuredMemory(chatId, userMessage, summary, entities, topics, importance, 'conversation-local', agentId);
+      }
+    } else {
+      // Primary: save locally
+      memoryId = saveStructuredMemory(
+        chatId,
+        userMessage,
+        summary,
+        entities,
+        topics,
+        importance,
+        'conversation',
+        agentId,
+      );
+    }
+
+    // Write to .md file for human-readable persistence (both primary and secondary)
     writeMemoryToFile(summary, topics, importance, 'conversation', userMessage);
 
     if (importance >= 0.8 && onHighImportanceMemory) {

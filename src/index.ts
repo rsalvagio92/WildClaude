@@ -215,6 +215,18 @@ async function main(): Promise<void> {
     logger.warn({ err }, 'skill-sync at startup failed');
   }
 
+  // Multi-machine sync: periodic health check + outbox flush (secondary only)
+  const { isSecondary } = await import('./config-role.js');
+  const { syncWithPrimary } = await import('./memory-sync-client.js');
+  if (isSecondary()) {
+    setInterval(() => {
+      void syncWithPrimary().catch((err) =>
+        logger.warn({ err }, 'Sync with primary failed'),
+      );
+    }, 5 * 60 * 1000); // Every 5 minutes
+    logger.info('Secondary machine sync enabled (every 5 min)');
+  }
+
   // Create bot only if token is available (skip for dashboard-only mode)
   const bot = activeBotToken ? createBot() : null;
 

@@ -8,6 +8,9 @@
  *
  * syncAutomations() is called at startup to insert/update defaults into
  * the scheduled_tasks DB, respecting user overrides from config.json.
+ *
+ * Role-gating: reflection, digest, wiki-curation only run on PRIMARY.
+ * Secondaries skip memory-processing automations to avoid dups.
  */
 
 import { PROJECT_ROOT } from './config.js';
@@ -15,6 +18,7 @@ import { logger } from './logger.js';
 import { createScheduledTask, getAllScheduledTasks, deleteScheduledTask, updateScheduledTaskPrompt, updateScheduledTaskSchedule } from './db.js';
 import { loadUserConfig } from './overlay.js';
 import { computeNextRun } from './scheduler.js';
+import { isPrimary } from './config-role.js';
 
 export interface AutomationDef {
   id: string;
@@ -151,6 +155,16 @@ export function syncAutomations(agentId = 'main'): void {
 
   // --- Default automations ---
   for (const def of DEFAULT_AUTOMATIONS) {
+    // Skip memory-processing automations on secondary (no dups)
+    const isPrimaryOnly = ['__internal:reflection', '__internal:digest', '__internal:wiki_curate'].some(id => def.id.includes(id));
+    if (isPrimaryOnly && !isPrimary()) {
+      logger.debug({ id: def.id }, 'Automation skipped on secondary (primary-only)');
+      if (existingById.has(def.id)) {
+        deleteScheduledTask(def.id);
+      }
+      continue;
+    }
+
     const userOverride = userById.get(def.id);
 
     // User explicitly disabled this automation

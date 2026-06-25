@@ -18,3 +18,5 @@ playwright-tests/
 playwright.config.ts
 .claude/
 scripts/frontend-screenshots/
+.vercel
+.env*.local

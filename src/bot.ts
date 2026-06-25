@@ -2067,7 +2067,7 @@ export function createBot(): Bot {
   });
 
   // Text messages — and any slash commands not owned by this bot (skills, e.g. /todo /gmail)
-  const OWN_COMMANDS = new Set(['/start', '/help', '/newchat', '/respin', '/voice', '/model', '/memory', '/forget', '/pin', '/unpin', '/chatid', '/wa', '/slack', '/dashboard', '/stop', '/agents', '/delegate', '/lock', '/status', '/ralph', '/morning', '/evening', '/goals', '/focus', '/journal', '/review', '/remember', '/reflect', '/secrets', '/set_secret', '/delete_secret', '/create_skill', '/create_agent', '/evolution', '/mcp', '/mcp_install', '/mcp_remove', '/import', '/personality', '/learnlesson', '/mission', '/missions', '/ho_comprato', '/finito', '/inventario', '/spesa', '/ricette']);
+  const OWN_COMMANDS = new Set(['/start', '/help', '/newchat', '/respin', '/voice', '/model', '/memory', '/forget', '/pin', '/unpin', '/chatid', '/wa', '/slack', '/dashboard', '/stop', '/agents', '/delegate', '/lock', '/status', '/ralph', '/morning', '/evening', '/goals', '/focus', '/journal', '/review', '/remember', '/reflect', '/secrets', '/set_secret', '/delete_secret', '/create_skill', '/create_agent', '/evolution', '/mcp', '/mcp_install', '/mcp_remove', '/import', '/personality', '/learnlesson', '/mission', '/missions', '/ho_comprato', '/finito', '/inventario', '/spesa', '/ricette', '/meeting']);
   bot.on('message:text', async (ctx) => {
     const text = ctx.message.text;
     const chatIdStr = ctx.chat!.id.toString();

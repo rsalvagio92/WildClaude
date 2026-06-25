@@ -1742,6 +1742,20 @@ export function startDashboard(botApi?: Api<RawApi>): void {
   // ── Hermes integration: trace inspector, memory blocks, evals, workflows, reflection, digest ──
   registerHermesRoutes(app);
 
+  // ── Multi-machine sync API (primary only) ─────────────────────────────
+  (async () => {
+    try {
+      const { isPrimary } = await import('./config-role.js');
+      const { registerSyncRoutes } = await import('./memory-sync-api.js');
+      if (isPrimary()) {
+        const syncToken = process.env.WILD_SYNC_TOKEN;
+        registerSyncRoutes(app, syncToken);
+      }
+    } catch (err) {
+      logger.warn({ err }, 'Sync API registration failed');
+    }
+  })();
+
   // ── External service dashboards ────────────────────────────────────
   registerExternalDashboardRoutes(app);
 

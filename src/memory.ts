@@ -19,6 +19,8 @@ import { logger } from './logger.js';
 import { ingestConversationTurn } from './memory-ingest.js';
 import { buildObsidianContext } from './obsidian.js';
 import { archiveActivityLog, logActivity } from './activity-log.js';
+import { isSecondary } from './config-role.js';
+import { searchRemoteMemories, getPinnedRemoteMemories } from './memory-sync-client.js';
 
 /**
  * Build a structured memory context string to prepend to the user's message.
@@ -46,9 +48,13 @@ export async function buildMemoryContext(
   const memLines: string[] = [];
 
   // Layer 1+2: parallel keyword + recent-high-importance queries.
+  // Secondary machines query remote memory; primary uses local DB.
+  const searchFn = isSecondary() ? searchRemoteMemories : (q: string) => Promise.resolve(searchMemories(chatId, q, 5, undefined, agentId));
+  const recentFn = isSecondary() ? getPinnedRemoteMemories : () => Promise.resolve(getRecentHighImportanceMemories(chatId, 5));
+
   const [searched, recent] = await Promise.all([
-    Promise.resolve(searchMemories(chatId, userMessage, 5, undefined, agentId)),
-    Promise.resolve(getRecentHighImportanceMemories(chatId, 5)),
+    searchFn(userMessage),
+    recentFn(),
   ]);
   for (const mem of searched) {
     seen.add(mem.id);
