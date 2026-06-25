@@ -17,6 +17,8 @@ export const MODULES = [
 
   { id: 'projects',   title: 'Projects',            icon: '📦', group: 'Projects' },
 
+  { id: 'machines',   title: 'Connected Machines',  icon: '🖥️', group: 'Projects' },
+
   { id: 'builder',    title: 'Dashboards',          icon: '📊', group: 'Ecosystem' },
   { id: 'ecosystem',  title: 'Skills & MCP',        icon: '🧩', group: 'Ecosystem' },
 
