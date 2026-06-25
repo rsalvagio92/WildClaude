@@ -159,12 +159,25 @@ export function startDashboard(botApi?: Api<RawApi>): void {
     }
   };
 
-  app.get('/', (c) => {
+  app.get('/', async (c) => {
+    // Secondaries serve a thin status page — full SPA is primary only.
+    const { isPrimary } = await import('./config-role.js');
+    if (!isPrimary()) return c.redirect('/status');
     const f = serveUiFile('index.html');
     if (f) return c.body(f.body as unknown as ArrayBuffer, 200, { 'Content-Type': f.type });
     return c.text('Dashboard UI not found (dashboard-ui/index.html missing).', 500);
   });
-  app.get('/dashboard', (c) => c.redirect('/'));
+  app.get('/dashboard', async (c) => {
+    const { isPrimary } = await import('./config-role.js');
+    return isPrimary() ? c.redirect('/') : c.redirect('/status');
+  });
+
+  // Secondary thin status page — no auth (just shows system info)
+  app.get('/status', (c) => {
+    const f = serveUiFile('status.html');
+    if (f) return c.body(f.body as unknown as ArrayBuffer, 200, { 'Content-Type': f.type });
+    return c.redirect('/');
+  });
 
   // Static assets for the new UI under /ui/* (no auth — the API behind them is gated).
   app.get('/ui/*', (c) => {
@@ -700,6 +713,31 @@ export function startDashboard(botApi?: Api<RawApi>): void {
     const costTimeline = getDashboardCostTimeline(chatId, 30);
     const recentUsage = getDashboardRecentTokenUsage(chatId, 20);
     return c.json({ stats, costTimeline, recentUsage });
+  });
+
+  // Node status — used by secondary's thin status page (authed via dashboard token)
+  app.get('/api/node-status', async (c) => {
+    const { loadRoleConfig, isSecondary } = await import('./config-role.js');
+    const { collectTelemetry } = await import('./machine-registry.js');
+    const pkg = JSON.parse(fs.readFileSync(path.join(PROJECT_ROOT, 'package.json'), 'utf-8'));
+    const config = loadRoleConfig();
+    const telemetry = await collectTelemetry();
+
+    let memoryCount = 0;
+    try {
+      const { getDb } = await import('./db.js');
+      memoryCount = (getDb().prepare('SELECT COUNT(*) as cnt FROM memories').get() as any).cnt;
+    } catch { /* ignore */ }
+
+    return c.json({
+      machineId: config.machineId,
+      role: config.role,
+      version: pkg.version,
+      primaryUrl: config.primaryUrl,
+      telemetry,
+      memoryCount,
+      lastSyncAgo: isSecondary() ? 'via heartbeat' : 'primary',
+    });
   });
 
   // Bot info (name, PID, chatId) — reads dynamically from state
