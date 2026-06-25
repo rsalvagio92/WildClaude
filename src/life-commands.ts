@@ -16,7 +16,7 @@ import { Bot, Context } from 'grammy';
 
 import { runAgent } from './agent.js';
 import { ALLOWED_CHAT_ID } from './config.js';
-import { deleteMemory, getRecentMemories, saveStructuredMemory } from './db.js';
+import { deleteMemory, getRecentMemories, saveStructuredMemory, insertDashboardData, queryDashboardData } from './db.js';
 import { logger } from './logger.js';
 import { lifePath } from './paths.js';
 import { MODELS } from './models.js';
@@ -26,6 +26,11 @@ import { MODELS } from './models.js';
 const GOALS_KEY = lifePath('goals', '_kernel', 'key.md');
 const ME_KEY = lifePath('me', '_kernel', 'key.md');
 const LOG_FILE = lifePath('me', '_kernel', 'log.md');
+const HEALTH_KEY = lifePath('health', '_kernel', 'key.md');
+
+// ── Food inventory constants ──────────────────────────────────────────────────
+const FOOD_DASHBOARD_ID = 'food-inventory-xk9m';
+const FOOD_WIDGET_ID = 'add-item';
 
 function readFileSafe(filePath: string): string {
   try {
@@ -145,6 +150,35 @@ async function guardedReply(ctx: Context, fn: () => Promise<void>): Promise<void
     logger.error({ err }, 'Life command error');
     await ctx.reply('Something went wrong. Check logs.').catch(() => {});
   }
+}
+
+// ── Food inventory helpers ────────────────────────────────────────────────────
+
+function getInventoryText(): string {
+  const rows = queryDashboardData(FOOD_DASHBOARD_ID, FOOD_WIDGET_ID, 90);
+  if (!rows.length) return 'Inventario vuoto.';
+  const stock: Record<string, { qty: number; unit: string; category: string }> = {};
+  for (const row of rows) {
+    const d = row.data as Record<string, unknown>;
+    const item = String(d.item || '').toLowerCase().trim();
+    const qty = Number(d.quantity) || 0;
+    const unit = String(d.unit || 'pz');
+    const category = String(d.category || '');
+    const action = String(d.action || 'aggiunto').toLowerCase();
+    if (!item) continue;
+    if (!stock[item]) stock[item] = { qty: 0, unit, category };
+    if (action === 'finito') { stock[item].qty = 0; }
+    else if (action === 'rimosso') { stock[item].qty = Math.max(0, stock[item].qty - qty); }
+    else { stock[item].qty += qty; }
+  }
+  const available = Object.entries(stock).filter(([, v]) => v.qty > 0);
+  if (!available.length) return 'Inventario vuoto.';
+  const grouped: Record<string, string[]> = {};
+  for (const [item, v] of available) {
+    if (!grouped[v.category]) grouped[v.category] = [];
+    grouped[v.category].push(`  ${item}: ${v.qty} ${v.unit}`);
+  }
+  return Object.entries(grouped).map(([cat, items]) => `*${cat}*\n${items.join('\n')}`).join('\n\n');
 }
 
 // ── Exported registration function ───────────────────────────────────────────
@@ -545,5 +579,88 @@ export function registerLifeCommands(bot: Bot<Context>): void {
         }
       }
     });
+  });
+
+  // ── /ho_comprato <item> <quantità> <unità> ───────────────────────────────
+  bot.command('ho_comprato', async (ctx) => {
+    if (String(ctx.chat?.id) !== ALLOWED_CHAT_ID) return;
+    const args = ctx.message?.text?.slice('/ho_comprato'.length).trim() || '';
+    if (!args) { await ctx.reply('Uso: /ho_comprato <articolo> <quantità> <unità> [categoria]\nEs: /ho_comprato pollo 500 g proteina'); return; }
+    const parts = args.split(/\s+/);
+    const item = parts[0];
+    const quantity = parseFloat(parts[1]) || 1;
+    const unit = parts[2] || 'pz';
+    const category = parts[3] || 'altro';
+    insertDashboardData(FOOD_DASHBOARD_ID, FOOD_WIDGET_ID, { item, quantity, unit, category, action: 'aggiunto' });
+    await ctx.reply(`✅ ${quantity}${unit} di ${item} aggiunti all'inventario.`);
+  });
+
+  // ── /finito <item> ────────────────────────────────────────────────────────
+  bot.command('finito', async (ctx) => {
+    if (String(ctx.chat?.id) !== ALLOWED_CHAT_ID) return;
+    const item = ctx.message?.text?.slice('/finito'.length).trim() || '';
+    if (!item) { await ctx.reply('Uso: /finito <articolo>\nEs: /finito pollo'); return; }
+    insertDashboardData(FOOD_DASHBOARD_ID, FOOD_WIDGET_ID, { item, quantity: 0, unit: 'pz', category: '', action: 'finito' });
+    await ctx.reply(`🗑️ ${item} rimosso dall'inventario.`);
+  });
+
+  // ── /inventario ───────────────────────────────────────────────────────────
+  bot.command('inventario', async (ctx) => {
+    if (String(ctx.chat?.id) !== ALLOWED_CHAT_ID) return;
+    const text = getInventoryText();
+    await ctx.reply(`📦 *Inventario attuale:*\n\n${text}`, { parse_mode: 'Markdown' });
+  });
+
+  // ── /spesa ────────────────────────────────────────────────────────────────
+  bot.command('spesa', async (ctx) => {
+    if (String(ctx.chat?.id) !== ALLOWED_CHAT_ID) return;
+    await ctx.api.sendChatAction(ctx.chat!.id, 'typing');
+    const inventoryText = getInventoryText();
+    const healthKernel = readFileSafe(HEALTH_KEY);
+    const prompt = `Sei un coach nutrizionale. Basandoti sul profilo fitness e sull'inventario attuale, genera una lista della spesa settimanale precisa.
+
+## Profilo fitness e obiettivi nutrizionali:
+${healthKernel}
+
+## Inventario attuale (quello che ho già):
+${inventoryText}
+
+## Istruzioni:
+- Target: ~2500 kcal/giorno, proteine 160-180g, recomp corporea
+- Considera che alcuni alimenti sono già disponibili
+- Lista della spesa per 7 giorni
+- Formato: categorizzata (Proteine / Carboidrati / Verdure / Grassi / Altro)
+- Per ogni item: quantità precisa in kg/g/pz
+- Privilegia surgelati e cose che durano
+- Pochi articoli, alta qualità nutritiva
+- Indica costo stimato totale (prezzi Germania supermercato)`;
+    const result = await runAgent(prompt, undefined, () => void ctx.api.sendChatAction(ctx.chat!.id, 'typing'));
+    await ctx.reply(result.text || 'Errore generando la lista spesa.');
+  });
+
+  // ── /ricette ──────────────────────────────────────────────────────────────
+  bot.command('ricette', async (ctx) => {
+    if (String(ctx.chat?.id) !== ALLOWED_CHAT_ID) return;
+    await ctx.api.sendChatAction(ctx.chat!.id, 'typing');
+    const inventoryText = getInventoryText();
+    const healthKernel = readFileSafe(HEALTH_KEY);
+    const prompt = `Sei un coach nutrizionale. Con gli ingredienti disponibili nell'inventario, suggerisci 5 ricette veloci e ad alto contenuto proteico.
+
+## Profilo e obiettivi:
+${healthKernel}
+
+## Ingredienti disponibili:
+${inventoryText}
+
+## Istruzioni per ogni ricetta:
+- Nome ricetta
+- Tempo preparazione
+- Strumento: air fryer / rice cooker / padella / microonde
+- Ingredienti con grammi esatti
+- Macros totali: kcal, proteine, carbo, grassi
+- Procedimento in 3-4 step max (no ricette elaborate)
+Privilegia ricette veloci (< 20 min) e con poca pulizia.`;
+    const result = await runAgent(prompt, undefined, () => void ctx.api.sendChatAction(ctx.chat!.id, 'typing'));
+    await ctx.reply(result.text || 'Errore generando ricette.');
   });
 }

@@ -66,10 +66,9 @@ Regole:
  * product labels, shopping bags. Multi-language aware.
  */
 export async function parseInventoryFromPhoto(localPath: string): Promise<InventoryItem[]> {
-  const prompt = `Analizza questa immagine ed estrai tutti gli articoli alimentari. Può essere: foto di frigo/dispensa, scontrino/ricevuta (italiano, tedesco, inglese), etichetta prodotto, busta della spesa.
+  const prompt = `Analyze the image at the path below and extract all food items. It may be a fridge/pantry photo, shopping receipt (Italian, German, or English), product label, or shopping bag.
 
-Immagine salvata in: ${localPath}
-Leggi (Read) il file immagine e analizza il contenuto.
+Use the Read tool to read the image file: ${localPath}
 
 Restituisci SOLO un JSON array, niente altro:
 [
@@ -109,7 +108,7 @@ Se è una FOTO DI FRIGO/DISPENSA:
 - price: 0 (non visibile)`;
 
   try {
-    const result = await runAgent(prompt, undefined, () => undefined, undefined, MODELS.haiku);
+    const result = await runAgent(prompt, undefined, () => undefined, undefined, MODELS.sonnet);
     const raw = result.text?.trim() ?? '[]';
     const jsonMatch = raw.match(/\[[\s\S]*\]/);
     if (!jsonMatch) return [];
