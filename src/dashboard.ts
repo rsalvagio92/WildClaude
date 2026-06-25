@@ -207,7 +207,12 @@ export function startDashboard(botApi?: Api<RawApi>): void {
   };
 
   // Token auth middleware (applies to /api/* only)
+  // /api/sync/* is excluded — those routes use X-Sync-Token and are gated at route level.
   app.use('/api/*', async (c, next) => {
+    if (c.req.path.startsWith('/api/sync/')) {
+      await next();
+      return;
+    }
     // Accept: Authorization: Bearer <token> (preferred), ?token=<token>
     // (fallback), or ?ticket=<signed> (for SSE/downloads — no raw token in URL).
     const authHeader = c.req.header('Authorization');
