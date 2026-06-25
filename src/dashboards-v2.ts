@@ -324,7 +324,17 @@ export async function resolveWidget(dashboardId: string, widget: Widget): Promis
 
 /** Append a tracker entry (form widget submit). */
 export function recordEntry(dashboardId: string, widgetId: string, values: Record<string, unknown>): number {
-  return insertDashboardData(dashboardId, widgetId, values);
+  const id = insertDashboardData(dashboardId, widgetId, values);
+
+  // Auto-decrement inventory when logging meals to the Cucina & Fitness dashboard
+  if (dashboardId === 'food-inventory-xk9m' && widgetId === 'log-meal' && values.pasto) {
+    const { decrementInventoryFromMeal } = require('./food-inventory.js');
+    void decrementInventoryFromMeal(values as any).catch((err: any) => {
+      logger.error({ err }, 'Auto-decrement inventory failed');
+    });
+  }
+
+  return id;
 }
 
 // ── LLM helpers ────────────────────────────────────────────────────────────

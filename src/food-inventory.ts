@@ -24,6 +24,14 @@ export interface InventoryItem {
   price?: number; // prezzo unitario confezione in EUR
 }
 
+export interface MealLog {
+  pasto: string;
+  calorie?: number;
+  proteina?: number;
+  carbo?: number;
+  grasso?: number;
+}
+
 /** Returns true if the transcribed voice text is about inventory updates. */
 export function isInventoryVoice(text: string): boolean {
   return /\b(ho comprato|ho preso|ho finito|ho acquistato|ho usato|comprato|preso|finito|acquistato|aggiunto|rimosso|messo in frigo|nel frigo|nella dispensa|dispensa|inventario)\b/i.test(text);
@@ -516,4 +524,83 @@ export function ensureFoodDashboard(): void {
 
   fs.writeFileSync(specFile, JSON.stringify(spec, null, 2), { mode: 0o600 });
   logger.info({ id: FOOD_DASHBOARD_ID }, 'Food & Fitness dashboard created');
+}
+
+/** Decrement inventory based on meal logged. E.g., "Bastoncini salmone + patate dolci + 2 uova" → remove 224g salmone, 250g patate dolci, 2 uova. */
+export async function decrementInventoryFromMeal(meal: MealLog): Promise<void> {
+  const mealText = meal.pasto || '';
+
+  // Parse meal text to extract ingredients with quantities
+  const prompt = `Analizza questo pasto e identifica gli ingredienti come sono scritti nel testo. Ritorna JSON ARRAY.
+
+Pasto: "${mealText}"
+
+Restituisci SOLO JSON array, formato:
+[
+  {"item": "bastoncini di salmone", "quantity": 224, "unit": "g"},
+  {"item": "patate dolci", "quantity": 250, "unit": "g"},
+  {"item": "uova", "quantity": 2, "unit": "pz"}
+]
+
+Regole:
+- Estrai SOLO ingredienti menzionati esplicitamente nel testo
+- Usa nomi normalizzati (vedi lista sotto)
+- quantity + unit devono corrispondere a come sono scritti (es "8 bastoncini" → quantity:8, unit:"pz")
+- Se quantità non esplicita, scrivi come numero per il conteggio (es "2 uova" → 2 pz)
+- Ritorna [] se il testo non contiene ingredienti chiari
+
+Normalizzazioni comuni:
+- bastoncini di salmone | bastoncini salmone | salmone → "bastoncini di salmone"
+- patate dolci | patata dolce → "patate dolci"
+- uova | uovo → "uova"
+- riso → "riso"
+- spinaci → "spinaci"`;
+
+  try {
+    const result = await runAgent(prompt, undefined, () => undefined, undefined, MODELS.haiku);
+    const raw = result.text?.trim() ?? '[]';
+    const jsonMatch = raw.match(/\[[\s\S]*\]/);
+    if (!jsonMatch) return;
+
+    const ingredients: Array<{ item: string; quantity: number; unit: string }> = JSON.parse(jsonMatch[0]);
+
+    // Load current inventory
+    const recent = queryDashboardData(FOOD_DASHBOARD_ID, FOOD_WIDGET_ID, 500);
+
+    // Match ingredients against inventory and decrement
+    for (const ing of ingredients) {
+      const match = recent.find(r => {
+        const invItem = normalizeItemName(String(r.data.item));
+        const ingItem = normalizeItemName(ing.item);
+        return invItem === ingItem && String(r.data.unit) === ing.unit;
+      });
+
+      if (match) {
+        const currentQty = Number(match.data.quantity) || 0;
+        const newQty = Math.max(0, currentQty - ing.quantity);
+
+        if (newQty === 0) {
+          // Mark as finito instead of leaving 0
+          insertDashboardData(FOOD_DASHBOARD_ID, FOOD_WIDGET_ID, {
+            item: match.data.item,
+            quantity: 0,
+            unit: ing.unit,
+            category: match.data.category,
+            action: 'finito'
+          });
+        } else {
+          // Update quantity in place (soft update via new entry with rimosso)
+          insertDashboardData(FOOD_DASHBOARD_ID, FOOD_WIDGET_ID, {
+            item: match.data.item,
+            quantity: ing.quantity,
+            unit: ing.unit,
+            category: match.data.category,
+            action: 'rimosso'
+          });
+        }
+      }
+    }
+  } catch (err) {
+    logger.error({ err }, 'Failed to decrement inventory from meal');
+  }
 }
