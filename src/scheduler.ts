@@ -40,6 +40,29 @@ const PRIMARY_ONLY_SENTINELS = new Set([
 ]);
 
 /**
+ * Secondary → primary: forward a lightweight improvement signal (no heavy local
+ * work). Queues to the outbox if the primary is offline.
+ */
+async function forwardFleetSignal(
+  kind: 'agent_improve' | 'code_improve',
+  title: string,
+  send: Sender,
+): Promise<void> {
+  try {
+    const { forwardProposal } = await import('./memory-sync-client.js');
+    const { loadRoleConfig } = await import('./config-role.js');
+    const machineId = loadRoleConfig().machineId;
+    const id = `${kind}-${machineId}-${new Date().toISOString().slice(0, 10)}`;
+    const ok = await forwardProposal({ id, kind, title, payload: { requestedBy: machineId } });
+    await send(ok
+      ? `📨 Segnale "${kind}" inoltrato alla primaria (esegue lei il lavoro pesante).`
+      : `📨 Primaria offline: segnale "${kind}" in coda outbox.`);
+  } catch (err) {
+    logger.warn({ err, kind }, 'fleet signal forward failed');
+  }
+}
+
+/**
  * Internal sentinel prompts trigger local handlers without calling the LLM.
  * Used by auto-cron tasks (reflection, digest, budget check) so cron jobs
  * don't burn tokens just to dispatch their work.
@@ -86,6 +109,12 @@ async function handleInternalSentinel(prompt: string, send: Sender): Promise<voi
     return;
   }
   if (prompt === '__internal:agent_improve:run') {
+    // On a secondary, forward a lightweight signal and skip the heavy local
+    // cycle — the primary owns the shared agent definitions and does the work.
+    if (isSecondary()) {
+      await forwardFleetSignal('agent_improve', 'Agent-improvement scan requested by secondary', send);
+      return;
+    }
     const { runSelfImprovementCycle } = await import('./agent-self-improvement.js');
     await runSelfImprovementCycle(send);
     return;
@@ -103,7 +132,13 @@ async function handleInternalSentinel(prompt: string, send: Sender): Promise<voi
     return;
   }
   if (prompt === '__internal:self_improve_code:run') {
-    // Part B — code self-improvement (gated, human-in-the-loop; opt-in).
+    // Code self-improvement (gated, human-in-the-loop; opt-in). On a secondary,
+    // forward a lightweight signal — the heavy worktree coding session runs on
+    // the primary, against the shared repo.
+    if (isSecondary()) {
+      await forwardFleetSignal('code_improve', 'Code-improvement run requested by secondary', send);
+      return;
+    }
     const { runCodeImprovement } = await import('./self-improvement.js');
     try { await runCodeImprovement(send); } catch (err) { logger.warn({ err }, 'self-improvement failed'); }
     return;

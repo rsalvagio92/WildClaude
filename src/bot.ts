@@ -1769,6 +1769,45 @@ export function createBot(): Bot {
     await ctx.reply(lines.join('\n'));
   });
 
+  // /proposals — review learning/improvement proposals forwarded by secondaries
+  // (primary only; the shared memory lives here). Usage:
+  //   /proposals                  → list pending
+  //   /proposals accept <id>      → approve (learning proposals apply to data dir)
+  //   /proposals reject <id>      → discard
+  bot.command('proposals', async (ctx) => {
+    if (!isAuthorised(ctx.chat!.id)) return;
+    const { isSecondary } = await import('./config-role.js');
+    if (isSecondary()) {
+      await ctx.reply('Le proposte si revisionano sulla macchina primaria (lì vive la memoria condivisa).');
+      return;
+    }
+    const { getPendingProposals, approveProposal, rejectProposal } = await import('./self-learning.js');
+    const parts = (ctx.match?.trim() || '').split(/\s+/).filter(Boolean);
+    const [action, id] = parts;
+
+    if (action === 'accept' && id) {
+      const summary = approveProposal(id);
+      await ctx.reply(summary ? `✅ ${summary}` : `Nessuna proposta pending con id ${id}.`);
+      return;
+    }
+    if (action === 'reject' && id) {
+      await ctx.reply(rejectProposal(id) ? `🗑 Proposta ${id} scartata.` : `Nessuna proposta pending con id ${id}.`);
+      return;
+    }
+
+    const pending = getPendingProposals();
+    if (!pending.length) {
+      await ctx.reply('Nessuna proposta in attesa dai secondari.');
+      return;
+    }
+    const lines = ['<b>Proposte dai secondari (in attesa)</b>', ''];
+    for (const p of pending) {
+      lines.push(`• <code>${p.id}</code> — [${p.kind}] da ${p.machine_origin}\n  ${p.title}`);
+    }
+    lines.push('', 'Usa: /proposals accept &lt;id&gt; oppure /proposals reject &lt;id&gt;');
+    await ctx.reply(lines.join('\n'), { parse_mode: 'HTML' });
+  });
+
   // /ralph — autonomous development loop (Ralph bridge)
   registerRalphCommand(bot, isAuthorised);
 

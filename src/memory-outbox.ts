@@ -11,7 +11,7 @@ import { logger } from './logger.js';
 export interface OutboxEntry {
   id: string;
   timestamp: number;
-  type: 'memory' | 'consolidation' | 'block'; // memory_block type
+  type: 'memory' | 'consolidation' | 'block' | 'proposal'; // sync payload type
   payload: unknown;
   retries: number;
   lastError?: string;

@@ -94,6 +94,34 @@ export async function ingestRemoteMemory(payload: {
   }
 }
 
+/**
+ * Forward a learning/improvement proposal from this secondary to the primary
+ * (which owns the shared memory). On failure it's queued in the outbox and
+ * flushed on the next reconnect — so a transient primary outage never loses it.
+ */
+export async function forwardProposal(proposal: {
+  id: string;
+  kind: 'learning' | 'agent_improve' | 'code_improve';
+  title: string;
+  payload: unknown;
+}): Promise<boolean> {
+  if (!isSecondary()) return false;
+  const config = loadRoleConfig();
+  const body = { ...proposal, machineOrigin: config.machineId };
+  try {
+    const res = await request('POST', '/api/sync/proposals', body);
+    if (res.success) {
+      logger.info({ id: proposal.id, kind: proposal.kind }, 'Proposal forwarded to primary');
+      return true;
+    }
+    throw new Error(`Forward failed: ${res.error}`);
+  } catch (err) {
+    logger.warn({ err, id: proposal.id }, 'Proposal forward failed, queuing outbox');
+    enqueueOutbox('proposal', body);
+    return false;
+  }
+}
+
 export async function checkPrimaryHealth(): Promise<boolean> {
   try {
     const res = await request('GET', '/api/sync/status');

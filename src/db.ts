@@ -476,6 +476,23 @@ function createSchema(database: Database.Database): void {
     );
     CREATE INDEX IF NOT EXISTS idx_push_devices_enabled ON push_devices(enabled);
 
+    -- Fleet learning/improvement proposals forwarded by secondaries to the
+    -- primary (which owns the shared memory). Secondaries send lightweight
+    -- signals; the primary reviews/applies them. kind: learning | agent_improve
+    -- | code_improve. status: pending | accepted | rejected.
+    CREATE TABLE IF NOT EXISTS incoming_proposals (
+      id             TEXT PRIMARY KEY,
+      machine_origin TEXT NOT NULL,
+      kind           TEXT NOT NULL,
+      title          TEXT NOT NULL,
+      payload        TEXT NOT NULL,
+      status         TEXT NOT NULL DEFAULT 'pending',
+      created_at     INTEGER NOT NULL,
+      reviewed_at    INTEGER
+    );
+    CREATE INDEX IF NOT EXISTS idx_incoming_proposals_status
+      ON incoming_proposals(status, created_at DESC);
+
     CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
       summary,
       raw_text,
@@ -2641,4 +2658,46 @@ export function loadBufferedMessages(): Map<string, string[]> {
     byChat.set(row.chat_id, list);
   }
   return byChat;
+}
+
+// ── Fleet: incoming proposals from secondaries ──────────────────────────────
+
+export interface IncomingProposal {
+  id: string;
+  machine_origin: string;
+  kind: 'learning' | 'agent_improve' | 'code_improve';
+  title: string;
+  payload: any;
+  status: 'pending' | 'accepted' | 'rejected';
+  created_at: number;
+  reviewed_at?: number | null;
+}
+
+/** Store a proposal forwarded by a secondary. Idempotent on id. */
+export function insertIncomingProposal(p: {
+  id: string;
+  machineOrigin: string;
+  kind: IncomingProposal['kind'];
+  title: string;
+  payload: unknown;
+}): void {
+  getDb().prepare(`
+    INSERT OR IGNORE INTO incoming_proposals (id, machine_origin, kind, title, payload, status, created_at)
+    VALUES (?, ?, ?, ?, ?, 'pending', ?)
+  `).run(p.id, p.machineOrigin, p.kind, p.title, JSON.stringify(p.payload ?? {}), Math.floor(Date.now() / 1000));
+}
+
+export function listIncomingProposals(status?: IncomingProposal['status']): IncomingProposal[] {
+  const rows = status
+    ? getDb().prepare('SELECT * FROM incoming_proposals WHERE status = ? ORDER BY created_at DESC').all(status) as any[]
+    : getDb().prepare('SELECT * FROM incoming_proposals ORDER BY created_at DESC LIMIT 200').all() as any[];
+  return rows.map((r) => ({
+    ...r,
+    payload: (() => { try { return JSON.parse(r.payload); } catch { return {}; } })(),
+  })) as IncomingProposal[];
+}
+
+export function setIncomingProposalStatus(id: string, status: 'accepted' | 'rejected'): void {
+  getDb().prepare('UPDATE incoming_proposals SET status = ?, reviewed_at = ? WHERE id = ?')
+    .run(status, Math.floor(Date.now() / 1000), id);
 }

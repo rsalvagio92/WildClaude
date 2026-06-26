@@ -185,6 +185,11 @@ export function registerSyncRoutes(app: Hono, syncToken?: string): void {
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           `).run(chatId, source || 'secondary', rawText, summary || '', JSON.stringify(entities || []), JSON.stringify(topics || []), importance || 0.5, agentId || 'main', machineOrigin || 'unknown', now, now);
           flushed++;
+        } else if (entry.type === 'proposal') {
+          const { id, kind, title, payload, machineOrigin } = entry.payload;
+          const { insertIncomingProposal } = await import('./db.js');
+          insertIncomingProposal({ id, machineOrigin: machineOrigin || 'unknown', kind, title, payload });
+          flushed++;
         }
       } catch (err) {
         logger.warn({ err, entryId: entry.id }, 'Sync: outbox entry flush failed, will retry');
@@ -192,6 +197,43 @@ export function registerSyncRoutes(app: Hono, syncToken?: string): void {
     }
 
     return c.json({ flushed, total: entries?.length || 0 });
+  });
+
+  // POST /api/sync/proposals (secondary forwards a learning/improvement signal)
+  // The primary stores it for review; secondaries never apply learning locally.
+  app.post('/api/sync/proposals', gate, async (c) => {
+    if (isSecondary()) {
+      return c.json({ error: 'Only primary receives proposals' }, 403);
+    }
+    const body = await c.req.json() as any;
+    const { id, kind, title, payload, machineOrigin } = body;
+    if (!id || !kind || !title) {
+      return c.json({ error: 'Missing id, kind or title' }, 400);
+    }
+    if (!['learning', 'agent_improve', 'code_improve'].includes(kind)) {
+      return c.json({ error: `Unknown kind: ${kind}` }, 400);
+    }
+    try {
+      const { insertIncomingProposal } = await import('./db.js');
+      insertIncomingProposal({ id, machineOrigin: machineOrigin || 'unknown', kind, title, payload });
+      logger.info({ id, kind, machineOrigin }, 'Sync: proposal ingested from secondary');
+      return c.json({ success: true, id });
+    } catch (err) {
+      logger.error({ err }, 'Sync: proposal write failed');
+      return c.json({ error: 'Write failed' }, 500);
+    }
+  });
+
+  // GET /api/sync/proposals?status=pending (primary lists forwarded proposals)
+  app.get('/api/sync/proposals', gate, async (c) => {
+    const status = c.req.query('status') as any;
+    try {
+      const { listIncomingProposals } = await import('./db.js');
+      return c.json({ proposals: listIncomingProposals(status || undefined) });
+    } catch (err) {
+      logger.error({ err }, 'Sync: proposal list failed');
+      return c.json({ error: 'Fetch failed' }, 500);
+    }
   });
 
   // GET /api/sync/status

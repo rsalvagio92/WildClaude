@@ -28,6 +28,9 @@ import { listOverlayItems } from './overlay.js';
 import { loadUserConfig, saveUserConfig } from './overlay.js';
 import { computeNextRun } from './scheduler.js';
 import { createScheduledTask } from './db.js';
+import { listIncomingProposals, setIncomingProposalStatus } from './db.js';
+import { isSecondary, loadRoleConfig } from './config-role.js';
+import { forwardProposal } from './memory-sync-client.js';
 
 // ── Daily backup ──────────────────────────────────────────────────────
 
@@ -231,7 +234,32 @@ export async function runSelfLearning(send: (text: string) => Promise<void>): Pr
     return backupSummary;
   }
 
+  // Fleet: on a secondary we DON'T apply locally — the shared memory lives on
+  // the primary. Forward the plan as a lightweight proposal; the primary
+  // reviews/applies it against the shared data dir.
+  if (isSecondary()) {
+    const machineId = loadRoleConfig().machineId;
+    const title = (plan.insights?.[0] || 'Nightly learning').slice(0, 120);
+    const id = `learn-${machineId}-${new Date().toISOString().slice(0, 10)}`;
+    const forwarded = await forwardProposal({ id, kind: 'learning', title, payload: plan });
+    const counts = `${plan.skills?.length || 0} skill, ${plan.automations?.length || 0} automazioni, ${plan.preferences?.length || 0} preferenze`;
+    await send(
+      `🌙 <b>Self-learning (secondaria → primaria)</b>\nBackup: ${backupSummary}\n` +
+      (forwarded
+        ? `Proposta inoltrata alla primaria per la review (${counts}).`
+        : `Primaria irraggiungibile: proposta in coda outbox, verrà inviata alla riconnessione (${counts}).`),
+    );
+    logger.info({ id, forwarded }, 'self-learning: plan forwarded to primary (secondary)');
+    return forwarded ? 'learning forwarded to primary' : 'learning queued (primary offline)';
+  }
+
   const { added } = applyPlan(plan, chatId);
+
+  // Fleet: count learning proposals forwarded by secondaries awaiting review.
+  // These are NOT auto-applied — the user approves/rejects via Telegram
+  // (`/proposals`), so the shared memory only changes on explicit consent.
+  const pendingFromSecondaries = listIncomingProposals('pending').filter((p) => p.kind === 'learning').length;
+
   // Version the additive changes in the USER-DATA repo (createSkill already
   // committed skills; commit the rest — config/log changes).
   try {
@@ -247,6 +275,9 @@ export async function runSelfLearning(send: (text: string) => Promise<void>): Pr
   if ((plan.insights || []).length) {
     lines.push('', '<b>Learned:</b>', ...plan.insights!.slice(0, 5).map((i) => `• ${i}`));
   }
+  if (pendingFromSecondaries > 0) {
+    lines.push('', `📨 <b>${pendingFromSecondaries} proposta/e dai secondari</b> in attesa di review — usa /proposals per approvare/scartare.`);
+  }
   if (added.length) {
     lines.push('', '<b>Built for you (additive, reversible):</b>', ...added.map((a) => `+ ${a}`));
     lines.push('', 'All changes are in your data dir, versioned + backed up — nothing in the code.');
@@ -256,4 +287,38 @@ export async function runSelfLearning(send: (text: string) => Promise<void>): Pr
   await send(lines.join('\n'));
   logger.info({ added, insights: plan.insights?.length }, 'self-learning cycle complete');
   return `learned: ${added.length} additions`;
+}
+
+// ── Review of forwarded proposals (primary, via Telegram /proposals) ─────────
+
+/** List pending proposals forwarded by secondaries. */
+export function getPendingProposals() {
+  return listIncomingProposals('pending');
+}
+
+/**
+ * Approve a forwarded proposal. For `learning` proposals this applies the plan
+ * to the shared data dir (additive). Other kinds are just acknowledged signals.
+ * Returns a short human summary, or null if the id isn't a pending proposal.
+ */
+export function approveProposal(id: string): string | null {
+  const prop = listIncomingProposals('pending').find((p) => p.id === id);
+  if (!prop) return null;
+  let summary: string;
+  if (prop.kind === 'learning') {
+    const { added } = applyPlan(prop.payload as LearningPlan, ALLOWED_CHAT_ID || '');
+    summary = `Applicate ${added.length} aggiunte da ${prop.machine_origin}` + (added.length ? `: ${added.join(', ')}` : '');
+  } else {
+    summary = `Segnale "${prop.kind}" da ${prop.machine_origin} accettato (esegui il lavoro sulla primaria).`;
+  }
+  setIncomingProposalStatus(id, 'accepted');
+  return summary;
+}
+
+/** Reject a forwarded proposal without applying it. */
+export function rejectProposal(id: string): boolean {
+  const prop = listIncomingProposals('pending').find((p) => p.id === id);
+  if (!prop) return false;
+  setIncomingProposalStatus(id, 'rejected');
+  return true;
 }
