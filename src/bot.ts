@@ -2401,6 +2401,11 @@ export function createBot(): Bot {
         }
         // No items parsed → fall through to normal handler
       }
+      // Echo the transcription so the user sees what was understood.
+      if (transcribed.trim()) {
+        await ctx.reply(`💬 ${transcribed}`);
+      }
+
       // Only reply with voice if explicitly requested — otherwise execute and respond in text
       const wantsVoiceBack = /\b(respond (with|via|in) voice|send (me )?(a )?voice( note| back)?|voice reply|reply (with|via) voice)\b/i.test(transcribed);
       messageQueue.enqueue(chatIdStr, () => handleMessage(ctx, `[Voice transcribed]: ${transcribed}`, wantsVoiceBack));

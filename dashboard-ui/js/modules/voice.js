@@ -1,5 +1,5 @@
 // Voice Chat — real-time STT (Web Speech API) + ElevenLabs TTS
-import { api, chatId } from '../api.js';
+import { api, chatId, getToken } from '../api.js';
 import { onSSE } from '../sse.js';
 import { el, mount, toastErr } from '../ui.js';
 
@@ -63,12 +63,17 @@ export default {
       isSpeaking = true;
       setStatus('speaking', 'Rispondo…');
       try {
+        const tok = getToken();
         const res = await fetch('/api/voice/tts', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${sessionStorage.getItem('wc_token') || ''}` },
+          headers: { 'Content-Type': 'application/json', ...(tok ? { Authorization: `Bearer ${tok}` } : {}) },
           body: JSON.stringify({ text }),
         });
-        if (!res.ok) { toastErr('TTS non disponibile'); return; }
+        if (!res.ok) {
+          const msg = await res.json().then(j => j.error).catch(() => `HTTP ${res.status}`);
+          toastErr('TTS: ' + msg);
+          return;
+        }
         const blob = await res.blob();
         audioEl.src = URL.createObjectURL(blob);
         await audioEl.play().catch(() => {});
