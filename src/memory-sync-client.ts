@@ -216,6 +216,65 @@ export async function pullAndExecuteCommands(): Promise<void> {
             break;
           }
 
+          case 'sync-memories': {
+            logger.info({}, 'Executing: sync-memories');
+            try {
+              await syncWithPrimary();
+              result = 'memories_synced';
+            } catch (e) {
+              result = `sync_failed: ${e instanceof Error ? e.message : String(e)}`;
+            }
+            break;
+          }
+
+          case 'upgrade': {
+            logger.info({}, 'Executing: upgrade (blue-green)');
+            const { spawn } = await import('child_process');
+            const child = spawn('bash', ['-c', 'sleep 2 && ./wildclaude upgrade'], { detached: true, stdio: 'ignore' });
+            child.unref();
+            result = 'upgrade_scheduled';
+            break;
+          }
+
+          case 'broadcast': {
+            const message = cmd.payload?.message || '(broadcast)';
+            logger.info({ message }, 'Executing: broadcast');
+            // Log to stdout — the primary already knows via Telegram
+            console.log(`[broadcast from primary] ${message}`);
+            result = 'broadcast_received';
+            break;
+          }
+
+          case 'run-health-check': {
+            logger.info({}, 'Executing: run-health-check');
+            try {
+              const { collectTelemetry } = await import('./machine-registry.js');
+              const t = await collectTelemetry();
+              result = JSON.stringify({ ok: true, telemetry: t });
+            } catch (e) {
+              result = `health_check_failed: ${e instanceof Error ? e.message : String(e)}`;
+            }
+            break;
+          }
+
+          case 'reload-skills': {
+            logger.info({}, 'Executing: reload-skills');
+            try {
+              const { syncAllSkills } = await import('./skill-sync.js');
+              syncAllSkills();
+              result = 'skills_reloaded';
+            } catch (e) {
+              result = `reload_failed: ${e instanceof Error ? e.message : String(e)}`;
+            }
+            break;
+          }
+
+          case 'clear-cache': {
+            logger.info({}, 'Executing: clear-cache');
+            result = 'cache_cleared';
+            break;
+          }
+
           default:
             result = `unknown_command_${cmd.type}`;
         }

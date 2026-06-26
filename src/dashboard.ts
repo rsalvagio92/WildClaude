@@ -577,6 +577,56 @@ export function startDashboard(botApi?: Api<RawApi>): void {
     }
   });
 
+  // Fleet summary — aggregate stats (must be before /:machineId routes)
+  app.get('/api/machines/summary', async (c) => {
+    try {
+      const { getMachines } = await import('./machine-registry.js');
+      const machines = getMachines();
+      const online = machines.filter((m) => m.status === 'online').length;
+      const offline = machines.length - online;
+      const avgCpu = machines
+        .filter((m) => m.telemetry?.cpuPercent != null)
+        .reduce((s, m) => s + (m.telemetry!.cpuPercent ?? 0), 0) /
+        (machines.filter((m) => m.telemetry?.cpuPercent != null).length || 1);
+      return c.json({ total: machines.length, online, offline, avgCpu: Math.round(avgCpu) });
+    } catch (err) {
+      return c.json({ total: 0, online: 0, offline: 0, avgCpu: 0 });
+    }
+  });
+
+  // Bulk command — send same command to all (or listed) machines
+  app.post('/api/machines/command-all', async (c) => {
+    const body = await c.req.json() as any;
+    const { type, payload, machineIds } = body;
+    if (!type) return c.json({ error: 'Missing command type' }, 400);
+    try {
+      const { getMachines } = await import('./machine-registry.js');
+      const { enqueueCommand } = await import('./machine-commands.js');
+      const targets = machineIds?.length
+        ? machineIds
+        : getMachines().map((m) => m.machineId);
+      const ids = targets.map((id: string) => enqueueCommand(id, type as any, payload || {}));
+      logger.info({ type, targets, ids }, 'Bulk command enqueued');
+      return c.json({ queued: ids.length, commandIds: ids });
+    } catch (err) {
+      logger.error({ err, type }, 'Bulk command failed');
+      return c.json({ error: 'Bulk enqueue failed' }, 500);
+    }
+  });
+
+  // Telemetry history for sparklines (must be before /:machineId/commands)
+  app.get('/api/machines/:machineId/telemetry-history', async (c) => {
+    const machineId = c.req.param('machineId');
+    const limit = parseInt(c.req.query('limit') || '24', 10);
+    try {
+      const { getMachineTelemetryHistory } = await import('./db.js');
+      const history = getMachineTelemetryHistory(machineId, limit);
+      return c.json({ history });
+    } catch (err) {
+      return c.json({ history: [] });
+    }
+  });
+
   // Multi-machine: enqueue a command to a secondary (primary only)
   app.post('/api/machines/:machineId/command', async (c) => {
     const machineId = c.req.param('machineId');

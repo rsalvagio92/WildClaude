@@ -454,6 +454,15 @@ function createSchema(database: Database.Database): void {
       created_at   INTEGER NOT NULL
     );
 
+    -- Rolling telemetry snapshots per machine (max 288 rows = 24h at 5-min intervals)
+    CREATE TABLE IF NOT EXISTS machine_telemetry_snapshots (
+      id         INTEGER PRIMARY KEY AUTOINCREMENT,
+      machine_id TEXT NOT NULL,
+      ts         INTEGER NOT NULL,
+      telemetry  TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_mts_machine_ts ON machine_telemetry_snapshots(machine_id, ts DESC);
+
     CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
       summary,
       raw_text,
@@ -605,6 +614,33 @@ export function upsertMachine(m: {
 
 export function loadAllMachines(): DbMachineRow[] {
   return getDb().prepare(`SELECT * FROM machines ORDER BY last_seen DESC`).all() as DbMachineRow[];
+}
+
+export function snapshotMachineTelemetry(machineId: string, telemetry: object): void {
+  const db = getDb();
+  const now = Math.floor(Date.now() / 1000);
+  db.prepare(`INSERT INTO machine_telemetry_snapshots (machine_id, ts, telemetry) VALUES (?, ?, ?)`).run(
+    machineId, now, JSON.stringify(telemetry),
+  );
+  // Keep last 288 rows (24h at 5-min heartbeat)
+  db.prepare(`
+    DELETE FROM machine_telemetry_snapshots
+    WHERE machine_id = ? AND id NOT IN (
+      SELECT id FROM machine_telemetry_snapshots WHERE machine_id = ? ORDER BY ts DESC LIMIT 288
+    )
+  `).run(machineId, machineId);
+}
+
+export function getMachineTelemetryHistory(
+  machineId: string,
+  limit = 24,
+): Array<{ ts: number; telemetry: object }> {
+  return (getDb().prepare(`
+    SELECT ts, telemetry FROM machine_telemetry_snapshots
+    WHERE machine_id = ? ORDER BY ts DESC LIMIT ?
+  `).all(machineId, limit) as any[])
+    .map((r) => ({ ts: r.ts, telemetry: JSON.parse(r.telemetry) }))
+    .reverse();
 }
 
 export function initDatabase(): void {

@@ -14,7 +14,11 @@ export type MachineCommandType =
   | 'toggle-automation'
   | 'set-model'
   | 'reload-skills'
-  | 'clear-cache';
+  | 'clear-cache'
+  | 'sync-memories'
+  | 'upgrade'
+  | 'broadcast'
+  | 'run-health-check';
 
 export interface MachineCommand {
   id: number;

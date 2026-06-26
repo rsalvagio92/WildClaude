@@ -6,7 +6,7 @@
 
 import os from 'node:os';
 import { logger } from './logger.js';
-import { upsertMachine, loadAllMachines } from './db.js';
+import { upsertMachine, loadAllMachines, snapshotMachineTelemetry } from './db.js';
 
 export interface MachineTelemetry {
   cpuPercent?: number; // 0-100
@@ -97,6 +97,11 @@ export function updateMachineStatus(
   if (version) machine.version = version;
   if (sessionCount !== undefined) machine.sessionCount = sessionCount;
   if (lastError !== undefined) machine.lastError = lastError;
+
+  // Record rolling snapshot for sparkline history
+  if (telemetry) {
+    try { snapshotMachineTelemetry(id, telemetry); } catch { /* non-fatal */ }
+  }
 
   try {
     upsertMachine({
