@@ -284,5 +284,24 @@ export function registerSyncRoutes(app: Hono, syncToken?: string): void {
     }
   });
 
+  // GET /api/sync/secrets
+  // Returns all syncable secrets as plaintext key→value pairs.
+  // Transport is already authenticated (X-Sync-Token) and LAN-only.
+  // Machine-specific secrets (DB_ENCRYPTION_KEY, DASHBOARD_TOKEN, etc.)
+  // are excluded by the syncable flag in the registry.
+  app.get('/api/sync/secrets', gate, async (c) => {
+    if (isSecondary()) {
+      return c.json({ error: 'Only primary exposes secrets' }, 403);
+    }
+    try {
+      const { getSyncableSecrets } = await import('./secrets.js');
+      const secrets = getSyncableSecrets();
+      return c.json({ secrets });
+    } catch (err) {
+      logger.error({ err }, 'Sync: secrets fetch failed');
+      return c.json({ error: 'Fetch failed' }, 500);
+    }
+  });
+
   logger.info({}, 'Sync API routes registered (primary only)');
 }

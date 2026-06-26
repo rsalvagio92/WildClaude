@@ -38,6 +38,12 @@ export interface SecretDef {
   obtainUrl?: string;
   /** Validation pattern */
   pattern?: RegExp;
+  /**
+   * Whether this secret is shared across primary→secondary sync.
+   * Machine-specific secrets (DASHBOARD_TOKEN, DB_ENCRYPTION_KEY,
+   * TELEGRAM_BOT_TOKEN) are never synced.
+   */
+  syncable?: boolean;
 }
 
 const SECRET_REGISTRY: SecretDef[] = [
@@ -47,6 +53,7 @@ const SECRET_REGISTRY: SecretDef[] = [
     description: 'Token from @BotFather for your Telegram bot',
     feature: 'core',
     required: true,
+    syncable: false, // machine-specific: each instance has its own bot
     obtainUrl: 'https://t.me/BotFather',
     pattern: /^\d+:[A-Za-z0-9_-]+$/,
   },
@@ -56,6 +63,7 @@ const SECRET_REGISTRY: SecretDef[] = [
     description: 'For Haiku router classification (optional if using subscription)',
     feature: 'router',
     required: false,
+    syncable: true,
     obtainUrl: 'https://console.anthropic.com/settings/keys',
     pattern: /^sk-ant-/,
   },
@@ -65,6 +73,7 @@ const SECRET_REGISTRY: SecretDef[] = [
     description: 'For Gemini memory extraction, embeddings, and consolidation',
     feature: 'memory',
     required: false,
+    syncable: true,
     obtainUrl: 'https://aistudio.google.com/apikey',
   },
   {
@@ -73,6 +82,7 @@ const SECRET_REGISTRY: SecretDef[] = [
     description: 'For voice transcription (Whisper STT)',
     feature: 'voice',
     required: false,
+    syncable: true,
     obtainUrl: 'https://console.groq.com/keys',
     pattern: /^gsk_/,
   },
@@ -82,6 +92,7 @@ const SECRET_REGISTRY: SecretDef[] = [
     description: 'For voice responses (text-to-speech)',
     feature: 'voice',
     required: false,
+    syncable: true,
     obtainUrl: 'https://elevenlabs.io/app/settings/api-keys',
   },
   {
@@ -90,6 +101,7 @@ const SECRET_REGISTRY: SecretDef[] = [
     description: 'Voice ID for TTS responses',
     feature: 'voice',
     required: false,
+    syncable: true,
   },
   {
     key: 'DASHBOARD_TOKEN',
@@ -97,6 +109,7 @@ const SECRET_REGISTRY: SecretDef[] = [
     description: 'Access token for the web dashboard (any random string)',
     feature: 'dashboard',
     required: false,
+    syncable: false, // machine-specific auth token
   },
   {
     key: 'DB_ENCRYPTION_KEY',
@@ -104,6 +117,7 @@ const SECRET_REGISTRY: SecretDef[] = [
     description: 'AES-256 key for encrypting sensitive data in SQLite',
     feature: 'core',
     required: true,
+    syncable: false, // each machine encrypts its own store independently
   },
   {
     key: 'SLACK_USER_TOKEN',
@@ -111,6 +125,7 @@ const SECRET_REGISTRY: SecretDef[] = [
     description: 'For Slack integration (read/send messages)',
     feature: 'slack',
     required: false,
+    syncable: true,
     pattern: /^xoxp-/,
   },
   // External dashboard services
@@ -120,6 +135,7 @@ const SECRET_REGISTRY: SecretDef[] = [
     description: 'For Vercel deployments, projects, and domains dashboard',
     feature: 'dashboard-vercel',
     required: false,
+    syncable: true,
     obtainUrl: 'https://vercel.com/account/tokens',
   },
   {
@@ -128,6 +144,7 @@ const SECRET_REGISTRY: SecretDef[] = [
     description: 'For Neon database projects dashboard',
     feature: 'dashboard-neon',
     required: false,
+    syncable: true,
     obtainUrl: 'https://console.neon.tech/app/settings/api-keys',
   },
   {
@@ -136,6 +153,7 @@ const SECRET_REGISTRY: SecretDef[] = [
     description: 'For GitHub repos and notifications dashboard',
     feature: 'dashboard-github',
     required: false,
+    syncable: true,
     obtainUrl: 'https://github.com/settings/tokens',
     pattern: /^(ghp_|github_pat_)/,
   },
@@ -145,6 +163,7 @@ const SECRET_REGISTRY: SecretDef[] = [
     description: 'For Stripe balance, charges, and customers dashboard',
     feature: 'dashboard-stripe',
     required: false,
+    syncable: true,
     obtainUrl: 'https://dashboard.stripe.com/apikeys',
     pattern: /^sk_(test_|live_)/,
   },
@@ -154,6 +173,7 @@ const SECRET_REGISTRY: SecretDef[] = [
     description: 'For Cloudflare zones and DNS dashboard',
     feature: 'dashboard-cloudflare',
     required: false,
+    syncable: true,
     obtainUrl: 'https://dash.cloudflare.com/profile/api-tokens',
   },
   {
@@ -162,6 +182,7 @@ const SECRET_REGISTRY: SecretDef[] = [
     description: 'For Sentry error tracking dashboard',
     feature: 'dashboard-sentry',
     required: false,
+    syncable: true,
     obtainUrl: 'https://sentry.io/settings/account/api/auth-tokens/',
   },
 ];
@@ -341,6 +362,22 @@ export function getSecretsStatus(): Array<{ key: string; name: string; feature: 
     }
   } catch { /* store unreadable — known defs only */ }
   return rows;
+}
+
+/**
+ * Return all syncable secrets as { key: value } pairs.
+ * Only keys explicitly marked syncable:true in the registry are included.
+ * Custom store keys are NOT exported (unknown syncability).
+ * Called by the primary's sync API to serve secondaries.
+ */
+export function getSyncableSecrets(): Record<string, string> {
+  const result: Record<string, string> = {};
+  for (const def of getAllSecretDefs()) {
+    if (!def.syncable) continue;
+    const value = getSecret(def.key);
+    if (value) result[def.key] = value;
+  }
+  return result;
 }
 
 // ── Telegram commands ────────────────────────────────────────────────

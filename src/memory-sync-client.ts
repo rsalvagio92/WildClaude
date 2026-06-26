@@ -310,6 +310,40 @@ export async function pullAndExecuteCommands(): Promise<void> {
   }
 }
 
+/**
+ * Pull syncable secrets from primary and store them locally (encrypted).
+ * Only overwrites a local secret if the primary value differs — so manually
+ * set local overrides survive as long as the primary key is absent.
+ */
+export async function syncSecrets(): Promise<{ synced: number; skipped: number }> {
+  if (!isSecondary()) return { synced: 0, skipped: 0 };
+
+  try {
+    const res = await request('GET', '/api/sync/secrets');
+    const incoming: Record<string, string> = res.secrets || {};
+    const { setSecret, getSecret } = await import('./secrets.js');
+
+    let synced = 0;
+    let skipped = 0;
+    for (const [key, value] of Object.entries(incoming)) {
+      const existing = getSecret(key);
+      if (existing === value) {
+        skipped++;
+        continue;
+      }
+      setSecret(key, value);
+      synced++;
+    }
+    if (synced > 0) {
+      logger.info({ synced, skipped }, 'Secrets synced from primary');
+    }
+    return { synced, skipped };
+  } catch (err) {
+    logger.warn({ err }, 'Secret sync from primary failed (degraded mode)');
+    return { synced: 0, skipped: 0 };
+  }
+}
+
 /** Periodic health check + outbox flush + command pull (call from automation). */
 export async function syncWithPrimary(): Promise<void> {
   if (!isSecondary()) return;
@@ -320,5 +354,6 @@ export async function syncWithPrimary(): Promise<void> {
     await registerWithPrimary();
     await flushOutbox();
     await pullAndExecuteCommands();
+    await syncSecrets();
   }
 }
