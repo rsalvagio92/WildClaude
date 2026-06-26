@@ -1,0 +1,31 @@
+{
+  "expo": {
+    "name": "WildClaude",
+    "slug": "wildclaude-app",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "scheme": "wildclaude",
+    "userInterfaceStyle": "dark",
+    "newArchEnabled": true,
+    "android": {
+      "package": "ai.wildclaude.app",
+      "permissions": ["RECORD_AUDIO", "CAMERA", "INTERNET", "POST_NOTIFICATIONS"]
+    },
+    "ios": {
+      "bundleIdentifier": "ai.wildclaude.app",
+      "supportsTablet": true,
+      "infoPlist": {
+        "NSMicrophoneUsageDescription": "WildClaude usa il microfono per la conversazione vocale.",
+        "NSCameraUsageDescription": "WildClaude usa la fotocamera per il pairing via QR code."
+      }
+    },
+    "plugins": [
+      "expo-router",
+      "expo-secure-store",
+      "expo-camera",
+      "expo-audio",
+      "expo-notifications"
+    ],
+    "experiments": { "typedRoutes": true }
+  }
+}

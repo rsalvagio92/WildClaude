@@ -795,6 +795,22 @@ export function startDashboard(botApi?: Api<RawApi>): void {
     const info = getBotInfo();
     const { getBotIdentity } = await import('./overlay.js');
     const identity = getBotIdentity();
+
+    // Capabilities — consumed by the mobile app to gate feature modules.
+    // Additive: existing web UI ignores unknown fields.
+    const caps: string[] = ['chat', 'memory', 'agents', 'monitoring', 'dashboards'];
+    try {
+      const { voiceCapabilities } = await import('./voice.js');
+      if (voiceCapabilities().tts) caps.push('voice');
+    } catch { /* voice optional */ }
+    let role: 'primary' | 'secondary' | 'unknown' = 'unknown';
+    try {
+      const { isPrimary, isSecondary } = await import('./config-role.js');
+      role = isPrimary() ? 'primary' : isSecondary() ? 'secondary' : 'unknown';
+      // Fleet management is meaningful on the primary (it tracks secondaries).
+      if (isPrimary()) caps.push('fleet');
+    } catch { /* role optional */ }
+
     return c.json({
       botName: identity.name || info.name || 'WildClaude',
       botEmoji: identity.emoji || '🐺',
@@ -804,6 +820,8 @@ export function startDashboard(botApi?: Api<RawApi>): void {
       pid: process.pid,
       chatId: ALLOWED_CHAT_ID || null,
       agentId: AGENT_ID,
+      role,
+      capabilities: caps,
     });
   });
 
