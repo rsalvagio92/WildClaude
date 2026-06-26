@@ -3,6 +3,7 @@
 // path is relative to /ui/js/modules/.
 export const MODULES = [
   { id: 'command',    title: 'Command Center',     icon: '💬', group: 'Chat' },
+  { id: 'voice',      title: 'Voice Chat',          icon: '🎙️', group: 'Chat' },
 
   { id: 'memory',     title: 'Memory Palace',       icon: '🧠', group: 'Knowledge' },
   { id: 'wiki',       title: 'Knowledge Wiki',      icon: '📚', group: 'Knowledge' },

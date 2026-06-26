@@ -1579,6 +1579,27 @@ export function startDashboard(botApi?: Api<RawApi>): void {
     return c.json({ ok: aborted });
   });
 
+  // POST /api/voice/tts — converts text to MP3 via ElevenLabs (for Dashboard Voice Chat)
+  app.post('/api/voice/tts', async (c) => {
+    const body = await c.req.json<{ text?: string }>().catch(() => ({ text: undefined }));
+    const text = (body as { text?: string })?.text?.trim();
+    if (!text) return c.json({ error: 'text required' }, 400);
+    if (text.length > 4000) return c.json({ error: 'text too long (max 4000 chars)' }, 400);
+
+    try {
+      const { synthesizeSpeech } = await import('./voice.js');
+      // Write to a temp file then read back — synthesizeSpeech returns a Buffer
+      const audioBuffer = await synthesizeSpeech(text);
+      return new Response(audioBuffer, {
+        headers: { 'Content-Type': 'audio/mpeg', 'Content-Length': String(audioBuffer.length) },
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      logger.warn({ err }, 'Voice TTS endpoint failed');
+      return c.json({ error: msg }, 500);
+    }
+  });
+
   // ── File Explorer ──────────────────────────────────────────────────
 
   const FILE_ROOTS: Record<string, string> = {
