@@ -170,7 +170,7 @@ import {
 import { getSlackConversations, getSlackMessages, sendSlackMessage, SlackConversation } from './slack.js';
 import { getWaChats, getWaChatMessages, sendWhatsAppMessage, WaChat } from './whatsapp.js';
 import { registerLifeCommands } from './life-commands.js';
-import { isInventoryVoice, parseInventoryFromText, parseInventoryFromPhoto, saveInventoryItems } from './food-inventory.js';
+import { isInventoryVoice, parseInventoryFromText, parseInventoryFromPhoto, saveInventoryItems, isMealVoice, handleMealMessage } from './food-inventory.js';
 import { startMeeting, getMeeting, addMeetingChunk, finalizeMeeting } from './meeting-recorder.js';
 import { registerRalphCommand } from './ralph.js';
 import { registerSandboxCommands } from './sandbox/commands.js';
@@ -2267,6 +2267,26 @@ export function createBot(): Bot {
     if (state) waState.delete(chatIdStr);
     if (slkState) slackState.delete(chatIdStr);
 
+    // ── Auto-log meals / inventory from typed text (deterministic) ──
+    // Same path as voice: keeps the food dashboard in sync regardless of
+    // whether the conversational LLM gets involved.
+    if (isAuthorised(ctx.chat!.id)) {
+      if (isMealVoice(text)) {
+        const confirmation = await handleMealMessage(text);
+        if (confirmation) {
+          await ctx.reply(confirmation, { parse_mode: 'Markdown' });
+          return;
+        }
+      }
+      if (isInventoryVoice(text)) {
+        const items = await parseInventoryFromText(text);
+        if (items.length > 0) {
+          await ctx.reply(saveInventoryItems(items), { parse_mode: 'Markdown' });
+          return;
+        }
+      }
+    }
+
     // ── Smart message routing: batching + fast-path + buffer ──────
     const queueBusy = messageQueue.queuedFor(chatIdStr) > 0;
 
@@ -2349,6 +2369,18 @@ export function createBot(): Bot {
         const totalDuration = meeting.chunks.reduce((sum, c) => sum + c.duration, 0);
         await ctx.reply(`✅ Chunk ${chunkCount} aggiunto (${Math.round(totalDuration / 60)}min totali)`, { parse_mode: 'Markdown' });
         return;
+      }
+
+      // Auto-detect a MEAL being eaten → log macros + decrement inventory.
+      // Runs before inventory check: meals keep the dashboard in sync without
+      // depending on the conversational LLM remembering to write.
+      if (isMealVoice(transcribed)) {
+        const confirmation = await handleMealMessage(transcribed);
+        if (confirmation) {
+          await ctx.reply(confirmation, { parse_mode: 'Markdown' });
+          return;
+        }
+        // Not actually a meal → fall through
       }
 
       // Auto-detect inventory voice updates

@@ -14,6 +14,7 @@ import { USER_DATA_DIR } from './paths.js';
 
 export const FOOD_DASHBOARD_ID = 'food-inventory-xk9m';
 export const FOOD_WIDGET_ID = 'add-item';
+export const MEAL_WIDGET_ID = 'log-meal';
 
 export interface InventoryItem {
   item: string;
@@ -35,6 +36,106 @@ export interface MealLog {
 /** Returns true if the transcribed voice text is about inventory updates. */
 export function isInventoryVoice(text: string): boolean {
   return /\b(ho comprato|ho preso|ho finito|ho acquistato|ho usato|comprato|preso|finito|acquistato|aggiunto|rimosso|messo in frigo|nel frigo|nella dispensa|dispensa|inventario)\b/i.test(text);
+}
+
+/**
+ * Returns true if the text describes a MEAL being eaten (not a shopping update).
+ * Meals: "per pranzo mangio…", "ho mangiato…", "a colazione…", "sto mangiando…".
+ * Deliberately distinct from isInventoryVoice so the bot can route meals to the
+ * meal logger (which also decrements inventory) instead of the conversational LLM.
+ */
+export function isMealVoice(text: string): boolean {
+  const t = text.toLowerCase();
+  // Must reference eating or a meal slot.
+  const eating = /\b(mangio|mangiato|sto mangiando|ho mangiato|sto cucinando|cucino|per (pranzo|cena|colazione)|a (pranzo|cena|colazione)|colazione con|pranzo con|cena con|spuntino|snack|merenda)\b/i.test(t);
+  if (!eating) return false;
+  // Exclude pure shopping phrasing ("ho comprato per cena" → inventory).
+  if (/\bho (comprato|acquistato|preso al supermercato)\b/i.test(t)) return false;
+  return true;
+}
+
+/** Parse a meal description into a MealLog with estimated macros (Haiku). */
+export async function parseMealFromText(text: string): Promise<MealLog | null> {
+  const prompt = `Analizza questo pasto descritto a voce e stima i valori nutrizionali totali.
+
+Messaggio: "${text}"
+
+Restituisci SOLO un JSON object, niente altro. Formato:
+{
+  "pasto": "Pranzo — merluzzo + patate dolci + broccoli",
+  "calorie": 402,
+  "proteina": 45,
+  "carbo": 50,
+  "grasso": 2
+}
+
+Regole:
+- "pasto": stringa breve. Prefissa con il momento se deducibile (Colazione/Pranzo/Cena/Spuntino —), poi gli ingredienti principali separati da +.
+- Stima calorie + macro (g) per le quantità indicate. Se la quantità non è data, assumi una porzione standard.
+- Numeri interi. Sii realistico (es. merluzzo 200g ≈ 180 kcal, 38g proteine).
+- Se il messaggio NON descrive cibo mangiato, restituisci null.`;
+
+  try {
+    const result = await runAgent(prompt, undefined, () => undefined, undefined, MODELS.haiku);
+    const raw = result.text?.trim() ?? 'null';
+    if (/^null$/i.test(raw)) return null;
+    const jsonMatch = raw.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) return null;
+    const meal = JSON.parse(jsonMatch[0]) as MealLog;
+    if (!meal.pasto) return null;
+    return meal;
+  } catch (err) {
+    logger.error({ err }, 'Failed to parse meal from text');
+    return null;
+  }
+}
+
+/** Persist a meal to the log-meal widget. */
+export function saveMeal(meal: MealLog): void {
+  insertDashboardData(FOOD_DASHBOARD_ID, MEAL_WIDGET_ID, {
+    pasto: meal.pasto,
+    calorie: meal.calorie ?? 0,
+    proteina: meal.proteina ?? 0,
+    carbo: meal.carbo ?? 0,
+    grasso: meal.grasso ?? 0,
+  });
+}
+
+/**
+ * End-to-end meal handler: parse → save to dashboard → decrement inventory.
+ * Returns a Telegram-ready confirmation string, or null if not a meal.
+ * This is the deterministic path that keeps the dashboard always in sync,
+ * independent of the conversational LLM.
+ */
+export async function handleMealMessage(text: string): Promise<string | null> {
+  const meal = await parseMealFromText(text);
+  if (!meal) return null;
+
+  saveMeal(meal);
+  // Decrement inventory (best-effort; logs its own errors).
+  await decrementInventoryFromMeal(meal).catch(() => undefined);
+
+  const totals = todayMealTotals();
+  return `🍽️ *${meal.pasto}*\n` +
+    `${meal.calorie ?? 0} kcal · P ${meal.proteina ?? 0}g · C ${meal.carbo ?? 0}g · G ${meal.grasso ?? 0}g\n\n` +
+    `_Oggi finora:_ ${totals.calorie} kcal · P ${totals.proteina}g · C ${totals.carbo}g · G ${totals.grasso}g`;
+}
+
+/** Sum today's logged meals (local day) for the running daily total. */
+export function todayMealTotals(): { calorie: number; proteina: number; carbo: number; grasso: number } {
+  const rows = queryDashboardData(FOOD_DASHBOARD_ID, MEAL_WIDGET_ID, 1);
+  const startOfDay = new Date();
+  startOfDay.setHours(0, 0, 0, 0);
+  const startSecs = Math.floor(startOfDay.getTime() / 1000);
+  const totals = { calorie: 0, proteina: 0, carbo: 0, grasso: 0 };
+  for (const r of rows) {
+    if (r.created_at < startSecs) continue;
+    totals.calorie += Number(r.data.calorie) || 0;
+    totals.proteina += Number(r.data.proteina) || 0;
+    totals.carbo += Number(r.data.carbo) || 0;
+    totals.grasso += Number(r.data.grasso) || 0;
+  }
+  return totals;
 }
 
 /** Parse food items from natural language text using Claude Haiku. */
