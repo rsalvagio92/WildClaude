@@ -553,17 +553,34 @@ export async function generateInsight(dashboardId: string, widgetId: string): Pr
   if (!spec) return { ok: false, error: 'No such dashboard' };
   const widget = spec.widgets.find((w) => w.id === widgetId);
   if (!widget) return { ok: false, error: 'No such widget' };
-  const readId = (widget.config?.readWidget as string) || widget.id;
-  const rows = queryDashboardData(dashboardId, readId, 60);
-  if (!rows.length) return { ok: true, text: 'No data logged yet — start logging and I’ll surface trends here.' };
+  const cfg = (widget.config || {}) as Record<string, unknown>;
+
+  // Multi-source insight: an insight can draw on several widgets' logged data
+  // (e.g. propose recipes from the inventory + saved-recipes widgets) and use a
+  // custom instruction. Falls back to the single-widget coach behaviour.
+  const sourceIds: string[] = Array.isArray(cfg.insightSources) && cfg.insightSources.length
+    ? (cfg.insightSources as string[])
+    : [(cfg.readWidget as string) || widget.id];
+
+  const datasets: Record<string, Array<Record<string, unknown>>> = {};
+  let total = 0;
+  for (const sid of sourceIds) {
+    const rows = queryDashboardData(dashboardId, sid, 200);
+    total += rows.length;
+    datasets[sid] = rows.slice(-60).map((r) => ({ at: new Date(r.created_at * 1000).toISOString().slice(0, 10), ...r.data }));
+  }
+  if (!total) return { ok: true, text: 'No data logged yet — start logging and I’ll surface trends here.' };
+
   try {
     const { MODELS } = await import('./models.js');
-    const sample = rows.slice(-40).map((r) => ({ at: new Date(r.created_at * 1000).toISOString().slice(0, 10), ...r.data }));
-    const prompt = `You are a concise personal-analytics coach. Given these logged entries for "${spec.title} → ${widget.title}", write 2-3 short sentences of genuinely useful insight: trends, averages, streaks, anomalies, and one actionable nudge. No preamble, no markdown headers.
-
-Data (JSON): ${JSON.stringify(sample)}`;
+    const instruction = typeof cfg.insightPrompt === 'string' && (cfg.insightPrompt as string).trim()
+      ? (cfg.insightPrompt as string).trim()
+      : `You are a concise personal-analytics coach. Given these logged entries for "${spec.title} → ${widget.title}", write 2-3 short sentences of genuinely useful insight: trends, averages, streaks, anomalies, and one actionable nudge. No preamble, no markdown headers.`;
+    // Single-source insights stay flat (back-compat); multi-source pass a keyed object.
+    const payload = sourceIds.length === 1 ? datasets[sourceIds[0]] : datasets;
+    const prompt = `${instruction}\n\nData (JSON): ${JSON.stringify(payload)}`;
     const text = (await ask(prompt, MODELS.haiku)).trim();
-    return { ok: true, text: text.slice(0, 800) };
+    return { ok: true, text: text.slice(0, 1200) };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : 'insight failed' };
   }

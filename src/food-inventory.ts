@@ -287,8 +287,6 @@ export function saveInventoryItems(items: InventoryItem[]): string {
 export function ensureFoodDashboard(): void {
   const dashDir = path.join(USER_DATA_DIR, 'dashboards');
   const specFile = path.join(dashDir, `${FOOD_DASHBOARD_ID}.json`);
-  if (fs.existsSync(specFile)) return;
-
   fs.mkdirSync(dashDir, { recursive: true });
 
   const now = Date.now();
@@ -403,13 +401,55 @@ export function ensureFoodDashboard(): void {
         source: { kind: 'local', field: 'grasso', agg: 'sum', sinceDays: 1 },
         config: { unit: 'g', readWidget: 'log-meal' },
       },
+      // ── PROGRESS GIORNALIERO (vs obiettivo) ──────────────────────────
+      {
+        id: 'calorie-goal',
+        type: 'gauge',
+        title: 'Calorie oggi (obiettivo 2200)',
+        w: 3,
+        source: { kind: 'local', field: 'calorie', agg: 'sum', sinceDays: 1 },
+        config: { unit: 'kcal', target: 2200, readWidget: 'log-meal' },
+      },
       {
         id: 'protein-goal',
         type: 'gauge',
-        title: 'Proteine giornaliere (obiettivo 150g)',
-        w: 4,
+        title: 'Proteine oggi (obiettivo 150g)',
+        w: 3,
         source: { kind: 'local', field: 'proteina', agg: 'sum', sinceDays: 1 },
         config: { unit: 'g', target: 150, readWidget: 'log-meal' },
+      },
+      {
+        id: 'carb-goal',
+        type: 'gauge',
+        title: 'Carbo oggi (obiettivo 250g)',
+        w: 3,
+        source: { kind: 'local', field: 'carbo', agg: 'sum', sinceDays: 1 },
+        config: { unit: 'g', target: 250, readWidget: 'log-meal' },
+      },
+      {
+        id: 'fat-goal',
+        type: 'gauge',
+        title: 'Grassi oggi (obiettivo 70g)',
+        w: 3,
+        source: { kind: 'local', field: 'grasso', agg: 'sum', sinceDays: 1 },
+        config: { unit: 'g', target: 70, readWidget: 'log-meal' },
+      },
+      // ── PROGRESS SETTIMANALE (vs obiettivo cumulato 7gg) ─────────────
+      {
+        id: 'calorie-goal-week',
+        type: 'gauge',
+        title: 'Calorie settimana (obiettivo 15400)',
+        w: 6,
+        source: { kind: 'local', field: 'calorie', agg: 'sum', sinceDays: 7 },
+        config: { unit: 'kcal', target: 15400, readWidget: 'log-meal' },
+      },
+      {
+        id: 'protein-goal-week',
+        type: 'gauge',
+        title: 'Proteine settimana (obiettivo 1050g)',
+        w: 6,
+        source: { kind: 'local', field: 'proteina', agg: 'sum', sinceDays: 7 },
+        config: { unit: 'g', target: 1050, readWidget: 'log-meal' },
       },
       {
         id: 'calories-7d',
@@ -518,6 +558,18 @@ export function ensureFoodDashboard(): void {
         source: { kind: 'local', field: 'costo', agg: 'avg' },
         config: { unit: '€', format: 'currency', readWidget: 'log-recipe' },
       },
+      {
+        id: 'recipe-suggestions',
+        type: 'insight',
+        title: 'AI: ricette dall’inventario',
+        w: 12,
+        config: {
+          insightSources: ['add-item', 'log-recipe'],
+          insightPrompt: `Sei uno chef-nutrizionista. Ti do due dataset JSON: "add-item" è il log dell'inventario cucina (ogni riga ha item, quantity, unit, action: aggiunto/rimosso/finito — ricostruisci lo stock attuale sommando aggiunti e sottraendo rimossi/finiti, ignora ciò che è a zero) e "log-recipe" sono le ricette già salvate dall'utente.
+
+Proponi 2-3 ricette cucinabili ORA usando solo o quasi solo gli ingredienti disponibili in inventario. Per ognuna: nome, ingredienti usati (con quantità), e stima calorie + proteine per porzione. Privilegia ricette già salvate se gli ingredienti ci sono. Segnala 1-2 ingredienti chiave mancanti se servono per completare un piatto. Italiano, conciso, niente preamboli né intestazioni markdown.`,
+        },
+      },
 
       // ── SPESA ─────────────────────────────────────────────────────────
       {
@@ -623,8 +675,39 @@ export function ensureFoodDashboard(): void {
     ],
   };
 
-  fs.writeFileSync(specFile, JSON.stringify(spec, null, 2), { mode: 0o600 });
-  logger.info({ id: FOOD_DASHBOARD_ID }, 'Food & Fitness dashboard created');
+  if (!fs.existsSync(specFile)) {
+    fs.writeFileSync(specFile, JSON.stringify(spec, null, 2), { mode: 0o600 });
+    logger.info({ id: FOOD_DASHBOARD_ID }, 'Food & Fitness dashboard created');
+    return;
+  }
+
+  // Migrate: add any new canonical widgets to the existing spec, preserving the
+  // user's existing widgets (and any target/title tweaks they made). Widget
+  // data lives in the DB keyed by widget id, so rewriting the spec is safe.
+  try {
+    const existing = JSON.parse(fs.readFileSync(specFile, 'utf-8')) as typeof spec;
+    const existingWidgets = existing.widgets || [];
+    const byId = new Map(existingWidgets.map((w) => [w.id, w]));
+    let added = 0;
+    const merged: typeof spec.widgets = spec.widgets.map((cw) => {
+      const prev = byId.get(cw.id);
+      if (prev) return prev; // preserve existing (keeps user tweaks)
+      added++;
+      return cw;
+    });
+    // Keep any extra widgets the user added that aren't in the canonical spec.
+    const canonicalIds = new Set(spec.widgets.map((w) => w.id));
+    for (const w of existingWidgets) if (!canonicalIds.has(w.id)) merged.push(w);
+
+    if (added > 0) {
+      existing.widgets = merged;
+      existing.updatedAt = now;
+      fs.writeFileSync(specFile, JSON.stringify(existing, null, 2), { mode: 0o600 });
+      logger.info({ id: FOOD_DASHBOARD_ID, added }, 'Food dashboard migrated (new widgets added)');
+    }
+  } catch (err) {
+    logger.error({ err }, 'Food dashboard migration failed');
+  }
 }
 
 /** Decrement inventory based on meal logged. E.g., "Bastoncini salmone + patate dolci + 2 uova" → remove 224g salmone, 250g patate dolci, 2 uova. */
