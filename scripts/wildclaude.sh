@@ -432,6 +432,7 @@ WorkingDirectory=$PROJECT_ROOT
 ExecStart=$node_path dist/index.js
 Restart=always
 RestartSec=10
+TimeoutStopSec=45
 Environment=NODE_ENV=production
 Environment=HOME=$HOME
 Environment=PATH=$HOME/.npm-global/bin:/usr/local/bin:/usr/bin:/bin

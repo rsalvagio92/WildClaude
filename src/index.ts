@@ -313,7 +313,7 @@ async function main(): Promise<void> {
 
   await bot!.start({
     allowed_updates: ['message', 'callback_query'],
-    drop_pending_updates: true,
+    drop_pending_updates: false,
     onStart: (botInfo) => {
       setTelegramConnected(true);
       setBotInfo(botInfo.username ?? '', botInfo.first_name ?? 'WildClaude');
