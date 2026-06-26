@@ -17,14 +17,13 @@ export default {
     const abortBtn = el('button.btn.btn-ghost.vc-abort', { text: '✕ Ferma', style: 'display:none' });
     const audioEl = el('audio', { autoplay: true, style: 'display:none' });
 
+    const children = [];
     if (HTTPS_WARN) {
-      const warn = el('div.banner.banner-warn', {
-        html: '⚠️ <strong>HTTPS richiesto</strong> per il microfono su LAN. Imposta <code>DASHBOARD_HTTPS=true</code> e riavvia.',
-      });
-      mount(view, warn);
+      children.push(el('div.banner.banner-warn', {
+        html: '⚠️ <strong>HTTPS richiesto</strong> per il microfono. Apri la dashboard via <code>https://</code> (accetta il certificato self-signed una volta).',
+      }));
     }
-
-    mount(view, el('div.vc-wrap', {}, [
+    children.push(
       el('div.vc-header', {}, [
         el('div.vc-status', {}, [statusDot, statusText]),
         abortBtn,
@@ -32,7 +31,9 @@ export default {
       transcript,
       el('div.vc-controls', {}, [micBtn]),
       audioEl,
-    ]));
+    );
+
+    mount(view, el('div.vc-wrap', {}, children));
 
     injectStyles();
 
