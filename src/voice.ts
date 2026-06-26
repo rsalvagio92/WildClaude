@@ -8,9 +8,25 @@ import { promisify } from 'util';
 
 import { logger } from './logger.js';
 import { readEnvFile } from './env.js';
+import { getSecret } from './secrets.js';
 import { USER_DATA_DIR } from './paths.js';
 
 const execFileAsync = promisify(execFile);
+
+/**
+ * Resolve config keys via the full secret resolution chain
+ * (encrypted store → .env → process.env), not just the .env file.
+ * Keys set through `/set_secret` live in the encrypted store, which
+ * readEnvFile alone can't see.
+ */
+function resolveSecrets(keys: string[]): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const k of keys) {
+    const v = getSecret(k);
+    if (v) out[k] = v;
+  }
+  return out;
+}
 
 // Cache ffmpeg availability check (only needs to run once)
 let _ffmpegAvailable: boolean | null = null;
@@ -150,7 +166,7 @@ export async function downloadTelegramFile(
  * Supports .ogg, .mp3, .wav, .m4a.
  */
 async function transcribeAudioGroq(filePath: string): Promise<string> {
-  const env = readEnvFile(['GROQ_API_KEY']);
+  const env = resolveSecrets(['GROQ_API_KEY']);
   const apiKey = env.GROQ_API_KEY;
   if (!apiKey) {
     throw new Error('GROQ_API_KEY not set in .env');
@@ -224,7 +240,7 @@ async function transcribeAudioGroq(filePath: string): Promise<string> {
  * Converts to WAV first (whisper-cpp requires WAV input).
  */
 async function transcribeAudioLocal(filePath: string): Promise<string> {
-  const env = readEnvFile(['WHISPER_CPP_PATH', 'WHISPER_MODEL_PATH']);
+  const env = resolveSecrets(['WHISPER_CPP_PATH', 'WHISPER_MODEL_PATH']);
   const whisperPath = env.WHISPER_CPP_PATH || 'whisper-cpp';
   const modelPath = env.WHISPER_MODEL_PATH;
   if (!modelPath) throw new Error('WHISPER_MODEL_PATH not set');
@@ -259,7 +275,7 @@ async function transcribeAudioLocal(filePath: string): Promise<string> {
  *   auto  — (default) Groq first, local fallback
  */
 export async function transcribeAudio(filePath: string): Promise<string> {
-  const env = readEnvFile(['GROQ_API_KEY', 'WHISPER_MODEL_PATH', 'STT_PROVIDER']);
+  const env = resolveSecrets(['GROQ_API_KEY', 'WHISPER_MODEL_PATH', 'STT_PROVIDER']);
   const provider = (env.STT_PROVIDER || 'auto').toLowerCase();
 
   if (provider === 'groq') {
@@ -290,7 +306,7 @@ export async function transcribeAudio(filePath: string): Promise<string> {
  * Convert text to speech using ElevenLabs and return the audio as a Buffer.
  */
 async function synthesizeSpeechElevenLabs(text: string): Promise<Buffer> {
-  const env = readEnvFile(['ELEVENLABS_API_KEY', 'ELEVENLABS_VOICE_ID']);
+  const env = resolveSecrets(['ELEVENLABS_API_KEY', 'ELEVENLABS_VOICE_ID']);
   const apiKey = env.ELEVENLABS_API_KEY;
   const voiceId = env.ELEVENLABS_VOICE_ID;
 
@@ -328,7 +344,7 @@ async function synthesizeSpeechElevenLabs(text: string): Promise<Buffer> {
  * Returns OGG Opus directly.
  */
 async function synthesizeSpeechGradium(text: string): Promise<Buffer> {
-  const env = readEnvFile(['GRADIUM_API_KEY', 'GRADIUM_VOICE_ID']);
+  const env = resolveSecrets(['GRADIUM_API_KEY', 'GRADIUM_VOICE_ID']);
   const apiKey = env.GRADIUM_API_KEY;
   const voiceId = env.GRADIUM_VOICE_ID;
 
@@ -371,7 +387,7 @@ export async function synthesizeSpeechLocal(text: string): Promise<Buffer> {
     throw new Error('ffmpeg not installed — required for local TTS');
   }
 
-  const env = readEnvFile(['TTS_VOICE']);
+  const env = resolveSecrets(['TTS_VOICE']);
   const voice = env.TTS_VOICE || 'Thomas';
   const id = `${Date.now()}_${crypto.randomBytes(4).toString('hex')}`;
   const tmpDir = path.join(UPLOADS_DIR, '..', 'tmp');
@@ -402,7 +418,7 @@ export async function synthesizeSpeechLocal(text: string): Promise<Buffer> {
  * Priority: ElevenLabs → Gradium AI → macOS say + ffmpeg.
  */
 export async function synthesizeSpeech(text: string): Promise<Buffer> {
-  const env = readEnvFile([
+  const env = resolveSecrets([
     'ELEVENLABS_API_KEY', 'ELEVENLABS_VOICE_ID',
     'GRADIUM_API_KEY', 'GRADIUM_VOICE_ID',
   ]);
@@ -436,7 +452,7 @@ export async function synthesizeSpeech(text: string): Promise<Buffer> {
  * TTS is available if any provider is configured or macOS say is available.
  */
 export function voiceCapabilities(): { stt: boolean; tts: boolean } {
-  const env = readEnvFile([
+  const env = resolveSecrets([
     'GROQ_API_KEY',
     'WHISPER_MODEL_PATH',
     'ELEVENLABS_API_KEY', 'ELEVENLABS_VOICE_ID',
