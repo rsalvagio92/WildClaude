@@ -4,18 +4,33 @@ import { onSSE } from '../sse.js';
 import { el, mount, toastErr } from '../ui.js';
 
 const HTTPS_WARN = window.location.protocol !== 'https:' && !window.location.hostname.includes('localhost');
+const SPEEDS = [0.75, 1, 1.25, 1.5, 1.75, 2];
 
 export default {
   async mount(view) {
     const cid = await chatId();
+
+    // ── Persisted playback speed ─────────────────────────────────────────
+    let speed = parseFloat(localStorage.getItem('vc_speed') || '1') || 1;
+    if (!SPEEDS.includes(speed)) speed = 1;
 
     // ── Layout ──────────────────────────────────────────────────────────
     const statusDot = el('span.vc-dot.idle');
     const statusText = el('span.vc-status-label', { text: 'Pronto' });
     const transcript = el('div.vc-transcript');
     const micBtn = el('button.btn.vc-mic', { html: '<span class="vc-mic-icon">🎙️</span><span>Tieni premuto per parlare</span>' });
-    const abortBtn = el('button.btn.btn-ghost.vc-abort', { text: '✕ Ferma', style: 'display:none' });
+    const stopBtn = el('button.btn.btn-ghost.vc-abort', { text: '✕ Ferma', style: 'display:none' });
     const audioEl = el('audio', { autoplay: true, style: 'display:none' });
+
+    // Speed selector
+    const speedBtn = el('button.btn.btn-ghost.vc-speed', { text: `⏩ ${speed}×`, title: 'Velocità voce' });
+    speedBtn.addEventListener('click', () => {
+      const i = SPEEDS.indexOf(speed);
+      speed = SPEEDS[(i + 1) % SPEEDS.length];
+      localStorage.setItem('vc_speed', String(speed));
+      speedBtn.textContent = `⏩ ${speed}×`;
+      audioEl.playbackRate = speed; // applies live if currently playing
+    });
 
     const children = [];
     if (HTTPS_WARN) {
@@ -26,7 +41,7 @@ export default {
     children.push(
       el('div.vc-header', {}, [
         el('div.vc-status', {}, [statusDot, statusText]),
-        abortBtn,
+        el('div.vc-header-actions', {}, [speedBtn, stopBtn]),
       ]),
       transcript,
       el('div.vc-controls', {}, [micBtn]),
@@ -41,8 +56,9 @@ export default {
     let recognition = null;
     let isListening = false;
     let isSpeaking = false;
+    let isThinking = false;
     let currentBotBubble = null;
-    let fullBotText = '';
+    let audioStopper = null; // resolves the speak() promise to end playback early
     let sseUnsub = null;
 
     function setStatus(dot, label) {
@@ -61,7 +77,11 @@ export default {
     async function speak(text) {
       if (!text.trim()) return;
       isSpeaking = true;
-      setStatus('speaking', 'Rispondo…');
+      setStatus('speaking', 'Rispondo… (premi il mic per interrompere)');
+      stopBtn.textContent = '⏹ Stop voce';
+      stopBtn.style.display = '';
+      micBtn.disabled = false; // allow barge-in while speaking
+      let safety;
       try {
         const tok = getToken();
         const res = await fetch('/api/voice/tts', {
@@ -76,21 +96,36 @@ export default {
         }
         const blob = await res.blob();
         audioEl.src = URL.createObjectURL(blob);
+        audioEl.playbackRate = speed;
         await audioEl.play().catch(() => {});
-        await new Promise(r => { audioEl.onended = r; audioEl.onerror = r; setTimeout(r, 30_000); });
+        audioEl.playbackRate = speed; // some browsers reset on play()
+        await new Promise(r => {
+          audioStopper = r;
+          audioEl.onended = r;
+          audioEl.onerror = r;
+          safety = setTimeout(r, 120_000);
+        });
       } catch (err) {
         toastErr('TTS: ' + (err?.message || err));
       } finally {
+        clearTimeout(safety);
+        audioStopper = null;
         isSpeaking = false;
-        setStatus('idle', 'Pronto');
+        stopBtn.style.display = 'none';
+        if (!isListening && !isThinking) setStatus('idle', 'Pronto');
         micBtn.disabled = false;
       }
+    }
+
+    function stopSpeaking() {
+      try { audioEl.pause(); audioEl.currentTime = 0; } catch {}
+      if (audioStopper) { const r = audioStopper; audioStopper = null; r(); }
     }
 
     // ── STT setup ────────────────────────────────────────────────────────
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SR) {
-      micBtn.textContent = 'Microfono non supportato (usa Chrome/Edge)';
+      micBtn.querySelector('span:last-child').textContent = 'Microfono non supportato (usa Chrome/Edge)';
       micBtn.disabled = true;
       return;
     }
@@ -111,25 +146,25 @@ export default {
         isListening = false;
         setMicState(false);
 
-        // Grab final transcript
         const said = statusText.textContent;
-        if (!said || said === 'Ascolto…') { setStatus('idle', 'Pronto'); return; }
+        if (!said || said === 'Ascolto…') { if (!isSpeaking) setStatus('idle', 'Pronto'); return; }
 
         addBubble('user', said);
         setStatus('thinking', 'Penso…');
+        isThinking = true;
         micBtn.disabled = true;
-        abortBtn.style.display = '';
-        fullBotText = '';
+        stopBtn.textContent = '✕ Ferma';
+        stopBtn.style.display = '';
         currentBotBubble = addBubble('bot', '…');
 
-        // Send to bot via existing chat endpoint
         try {
           await api.post('/api/chat/send', { message: said });
         } catch (err) {
           toastErr('Invio fallito');
+          isThinking = false;
           setStatus('idle', 'Pronto');
           micBtn.disabled = false;
-          abortBtn.style.display = 'none';
+          stopBtn.style.display = 'none';
         }
       };
 
@@ -137,7 +172,7 @@ export default {
         isListening = false;
         setMicState(false);
         if (e.error !== 'no-speech') toastErr('Mic: ' + e.error);
-        setStatus('idle', 'Pronto');
+        if (!isSpeaking && !isThinking) setStatus('idle', 'Pronto');
       };
     }
     initRecognition();
@@ -146,7 +181,7 @@ export default {
     // The bot emits ONE assistant_message with the full content (no token
     // streaming). progress events update the status line while it thinks.
     const unsubProgress = onSSE('progress', (data) => {
-      if (currentBotBubble) setStatus('thinking', data.description || 'Penso…');
+      if (isThinking) setStatus('thinking', data.description || 'Penso…');
     });
 
     const unsubAssistant = onSSE('assistant_message', async (data) => {
@@ -154,16 +189,17 @@ export default {
       const text = data.content || '';
       currentBotBubble.textContent = text || '(vuoto)';
       transcript.scrollTop = transcript.scrollHeight;
-      abortBtn.style.display = 'none';
       currentBotBubble = null;
+      isThinking = false;
       if (text.trim()) await speak(stripMarkdown(text));
-      else { setStatus('idle', 'Pronto'); micBtn.disabled = false; }
+      else { setStatus('idle', 'Pronto'); micBtn.disabled = false; stopBtn.style.display = 'none'; }
     });
 
     const unsubError = onSSE('error', (data) => {
       if (currentBotBubble) currentBotBubble.textContent = '⚠️ ' + (data.content || 'Errore');
       currentBotBubble = null;
-      abortBtn.style.display = 'none';
+      isThinking = false;
+      stopBtn.style.display = 'none';
       micBtn.disabled = false;
       setStatus('idle', 'Pronto');
     });
@@ -177,7 +213,8 @@ export default {
     }
 
     function startListening() {
-      if (isListening || isSpeaking || micBtn.disabled) return;
+      if (isListening || micBtn.disabled) return;
+      if (isSpeaking) stopSpeaking(); // barge-in: interrupt the reply and listen
       isListening = true;
       setMicState(true);
       setStatus('listening', 'Ascolto…');
@@ -196,14 +233,15 @@ export default {
     micBtn.addEventListener('touchstart', e => { e.preventDefault(); startListening(); }, { passive: false });
     micBtn.addEventListener('touchend', e => { e.preventDefault(); stopListening(); });
 
-    abortBtn.addEventListener('click', async () => {
+    // Stop button: stop voice if speaking, else abort the in-flight reply
+    stopBtn.addEventListener('click', async () => {
+      if (isSpeaking) { stopSpeaking(); return; }
       await api.post('/api/chat/abort', {}).catch(() => {});
       if (recognition) try { recognition.stop(); } catch {}
       isListening = false;
-      isSpeaking = false;
+      isThinking = false;
       currentBotBubble = null;
-      fullBotText = '';
-      abortBtn.style.display = 'none';
+      stopBtn.style.display = 'none';
       micBtn.disabled = false;
       setStatus('idle', 'Pronto');
     });
@@ -240,8 +278,11 @@ function injectStyles() {
   s.id = 'vc-styles';
   s.textContent = `
     .vc-wrap { display:flex; flex-direction:column; gap:1rem; height:calc(100vh - 140px); }
-    .vc-header { display:flex; align-items:center; justify-content:space-between; }
-    .vc-status { display:flex; align-items:center; gap:.5rem; font-size:.85rem; color:var(--color-muted,#888); }
+    .vc-header { display:flex; align-items:center; justify-content:space-between; gap:.5rem; }
+    .vc-header-actions { display:flex; align-items:center; gap:.5rem; }
+    .vc-speed { font-variant-numeric:tabular-nums; }
+    .vc-status { display:flex; align-items:center; gap:.5rem; font-size:.85rem; color:var(--color-muted,#888); min-width:0; }
+    .vc-status-label { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
     .vc-dot { width:10px; height:10px; border-radius:50%; background:#555; transition:background .3s; flex-shrink:0; }
     .vc-dot.idle     { background:#555; }
     .vc-dot.listening{ background:#ef4444; animation:vc-pulse 1s ease-in-out infinite; }
