@@ -17,8 +17,27 @@ import { messageQueue } from './message-queue.js';
 import { runAgent } from './agent.js';
 import { formatForTelegram, splitMessage } from './bot.js';
 import { emitChatEvent } from './state.js';
+import { isSecondary } from './config-role.js';
 
 type Sender = (text: string) => Promise<void>;
+
+/**
+ * Fleet task policy. With shared memory living on the primary, routine and
+ * housekeeping tasks must run ONLY on the primary — otherwise secondaries
+ * duplicate digests/reflections/cleanup against their own (non-shared) data.
+ *
+ * Sentinels NOT listed here are "fleet" tasks: they may run on secondaries
+ * too, and their results are forwarded to the primary (see self-learning /
+ * self-improvement forwarding).
+ */
+const PRIMARY_ONLY_SENTINELS = new Set([
+  '__internal:reflect:day',
+  '__internal:reflect:week',
+  '__internal:digest:day',
+  '__internal:budget:check',
+  '__internal:cleanup:run',
+  '__internal:wiki_curate:run',
+]);
 
 /**
  * Internal sentinel prompts trigger local handlers without calling the LLM.
@@ -26,6 +45,12 @@ type Sender = (text: string) => Promise<void>;
  * don't burn tokens just to dispatch their work.
  */
 async function handleInternalSentinel(prompt: string, send: Sender): Promise<void> {
+  // Role gating: routine/housekeeping sentinels are primary-only. On a
+  // secondary they're no-ops (the primary owns the shared data they operate on).
+  if (isSecondary() && PRIMARY_ONLY_SENTINELS.has(prompt)) {
+    logger.info({ prompt }, 'Skipping primary-only sentinel on secondary');
+    return;
+  }
   if (prompt === '__internal:reflect:day' || prompt === '__internal:reflect:week') {
     const { generateReflection } = await import('./reflection.js');
     const period = prompt.endsWith(':week') ? 'week' : 'day';
