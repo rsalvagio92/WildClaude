@@ -11,8 +11,8 @@ export default {
     const cid = await chatId();
 
     // ── Persisted playback speed ─────────────────────────────────────────
-    let speed = parseFloat(localStorage.getItem('vc_speed') || '1') || 1;
-    if (!SPEEDS.includes(speed)) speed = 1;
+    let speed = parseFloat(localStorage.getItem('vc_speed') || '1.25') || 1.25;
+    if (!SPEEDS.includes(speed)) speed = 1.25;
 
     // ── Layout ──────────────────────────────────────────────────────────
     const statusDot = el('span.vc-dot.idle');
