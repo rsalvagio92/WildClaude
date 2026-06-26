@@ -60,6 +60,7 @@ export const FEATURES: FeatureDef[] = [
 
   { id: 'dashboards', title: 'Dashboards',    icon: '📊', group: 'Dashboards', enabledByDefault: true,  requiresServerCap: ['dashboards'],  phase: 4 },
 
+  { id: 'notifications', title: 'Notifiche',  icon: '🔔', group: 'System',     enabledByDefault: true,  requiresServerCap: ['chat'],        phase: 1 },
   { id: 'settings',   title: 'Settings',      icon: '⚙️', group: 'System',     enabledByDefault: true,  requiresServerCap: [],              phase: 0 },
 ];
 

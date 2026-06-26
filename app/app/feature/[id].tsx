@@ -1,12 +1,11 @@
 import { View, Text, Pressable, ScrollView } from 'react-native';
-import { useLocalSearchParams, useRouter, Stack } from 'expo-router';
+import { useLocalSearchParams, useRouter, Stack, Redirect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { getFeature } from '@/features/manifest';
 import FeaturesSettings from '@/screens/FeaturesSettings';
 
-// Generic feature host. Phase 0 implements 'settings'; other features render a
-// "arriva nella Phase N" placeholder until their screen lands. Each phase swaps
-// a case here for the real screen — the manifest/nav never changes.
+// Generic feature host. Swaps real screens as phases ship.
+// Phase 1: 'talk' → /talk, 'push' → /push-setup
 export default function FeatureScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
@@ -16,6 +15,11 @@ export default function FeatureScreen() {
   if (!def) {
     return <Placeholder insetTop={insets.top} title="Sconosciuto" body="Funzione non trovata nel manifest." onBack={() => router.back()} />;
   }
+
+  // Phase 1 screens with dedicated routes
+  if (def.id === 'talk') return <Redirect href="/talk" />;
+  if (def.id === 'voice') return <Redirect href="/talk" />;
+  if (def.id === 'notifications') return <Redirect href="/push-setup" />;
 
   if (def.id === 'settings') return <FeaturesSettings />;
 

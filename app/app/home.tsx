@@ -39,7 +39,13 @@ export default function Home() {
         <View key={group} className="mb-6">
           <Text className="text-muted text-xs uppercase tracking-wider mb-2">{group}</Text>
           <View className="flex-row flex-wrap gap-3">
-            {items.map((f) => <Tile key={f.id} f={f} onPress={() => router.push(`/feature/${f.id}` as any)} />)}
+            {items.map((f) => {
+              // Phase 1 features with dedicated routes get direct navigation
+              const href = f.id === 'talk' || f.id === 'voice' ? '/talk'
+                : f.id === 'notifications' ? '/push-setup'
+                : `/feature/${f.id}`;
+              return <Tile key={f.id} f={f} onPress={() => router.push(href as any)} />;
+            })}
           </View>
         </View>
       ))}

@@ -463,6 +463,19 @@ function createSchema(database: Database.Database): void {
     );
     CREATE INDEX IF NOT EXISTS idx_mts_machine_ts ON machine_telemetry_snapshots(machine_id, ts DESC);
 
+    -- Registered Expo push devices (mobile app). One row per push token.
+    CREATE TABLE IF NOT EXISTS push_devices (
+      token        TEXT PRIMARY KEY,
+      platform     TEXT,
+      device_name  TEXT,
+      prefs        TEXT NOT NULL DEFAULT '{}',
+      enabled      INTEGER NOT NULL DEFAULT 1,
+      created_at   INTEGER NOT NULL,
+      updated_at   INTEGER NOT NULL,
+      last_used_at INTEGER
+    );
+    CREATE INDEX IF NOT EXISTS idx_push_devices_enabled ON push_devices(enabled);
+
     CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
       summary,
       raw_text,

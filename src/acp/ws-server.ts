@@ -20,7 +20,12 @@ import { logger } from '../logger.js';
 import { runAgent } from '../agent.js';
 
 const PORT = parseInt(process.env.ACP_WS_PORT ?? '0', 10);
-const WS_MAGIC = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11';
+/**
+ * RFC 6455 GUID for the Sec-WebSocket-Accept handshake. Exported so other WS
+ * transports (e.g. the chat gateway in ../ws-chat.ts) reuse the same framing
+ * instead of duplicating it.
+ */
+export const WS_MAGIC = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11';
 
 interface Session {
   sessionId: string;
@@ -31,7 +36,7 @@ const sessions = new Map<string, Session>();
 
 // ── Minimal WS framing ──────────────────────────────────────────────
 
-function encodeFrame(payload: string): Buffer {
+export function encodeFrame(payload: string): Buffer {
   const data = Buffer.from(payload, 'utf8');
   const len = data.length;
   let header: Buffer;
@@ -51,7 +56,7 @@ function encodeFrame(payload: string): Buffer {
   return Buffer.concat([header, data]);
 }
 
-function decodeFrame(buf: Buffer): { payload: string; rest: Buffer } | null {
+export function decodeFrame(buf: Buffer): { payload: string; rest: Buffer } | null {
   if (buf.length < 2) return null;
   const b1 = buf[1];
   const masked = (b1 & 0x80) === 0x80;

@@ -10,6 +10,7 @@ import { ensureEncryptionKey } from './secrets.js';
 import { needsCliOnboarding, runCliOnboarding } from './cli-onboarding.js';
 import { startDashboard } from './dashboard.js';
 import { startAcpWebSocketServer } from './acp/ws-server.js';
+import { startWsChatServer } from './ws-chat.js';
 import { initDatabase, cleanupOldMissionTasks, insertAuditLog } from './db.js';
 import { initSecurity, setAuditCallback } from './security.js';
 import { logger } from './logger.js';
@@ -21,6 +22,7 @@ import { initOrchestrator } from './orchestrator.js';
 import { initScheduler } from './scheduler.js';
 import { syncAutomations } from './automations.js';
 import { setTelegramConnected, setBotInfo } from './state.js';
+import { notifyUser, setTelegramDelivery } from './notify.js';
 
 // Parse --agent flag
 const agentFlagIndex = process.argv.indexOf('--agent');
@@ -237,26 +239,36 @@ async function main(): Promise<void> {
   // Create bot only if token is available (skip for dashboard-only mode)
   const bot = activeBotToken ? createBot() : null;
 
+  // Register the Telegram backend behind notifyUser() so proactive messages
+  // dual-deliver (Telegram + Expo push). Handles Telegram's 4096-char limit
+  // via splitMessage and retries transient failures. Absent in dashboard-only
+  // mode, in which case notifyUser() simply skips Telegram.
+  if (bot && ALLOWED_CHAT_ID) {
+    setTelegramDelivery(async (text, opts) => {
+      const { splitMessage, sendMessageWithRetry } = await import('./bot.js');
+      const sendOpts = opts as Parameters<typeof sendMessageWithRetry>[3];
+      for (const chunk of splitMessage(text)) {
+        await sendMessageWithRetry(bot.api, ALLOWED_CHAT_ID, chunk, sendOpts);
+      }
+    });
+  }
+
   // Dashboard only runs in the main bot process
   if (AGENT_ID === 'main') {
     startDashboard(bot?.api);
     // ACP WebSocket transport (opt-in via ACP_WS_PORT)
     startAcpWebSocketServer();
+    // Chat streaming gateway for the mobile/web app (WS_CHAT_PORT, default 3142)
+    startWsChatServer();
   }
 
   if (ALLOWED_CHAT_ID) {
     initScheduler(
+      // Scheduler results reach the user through the notifyUser() seam, so they
+      // dual-deliver to Telegram and the mobile app's Expo push in parallel.
+      // splitMessage/retry happen inside the registered Telegram backend above.
       async (text) => {
-        // Split long messages to respect Telegram's 4096 char limit.
-        // The scheduler's splitMessage handles chunking, but the sender
-        // callback is also called directly for status messages which may exceed the limit.
-        const { splitMessage, sendMessageWithRetry } = await import('./bot.js');
-        for (const chunk of splitMessage(text)) {
-          if (!bot) continue;
-          await sendMessageWithRetry(bot.api, ALLOWED_CHAT_ID, chunk, { parse_mode: 'HTML' }).catch((err) =>
-            logger.error({ err }, 'Scheduler failed to send message after retries'),
-          );
-        }
+        await notifyUser(text, { category: 'scheduled', telegram: { parse_mode: 'HTML' } });
       },
       AGENT_ID,
     );
