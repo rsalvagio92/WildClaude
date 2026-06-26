@@ -193,6 +193,24 @@ cmd_restart() {
   cmd_start
 }
 
+# Deferred restart that survives being called from INSIDE the service cgroup.
+# A normal `systemctl restart` kills the whole wildclaude.service cgroup —
+# including any Claude CLI agent that triggered the restart, so its in-flight
+# Telegram reply is lost. systemd-run schedules the restart in a transient unit
+# OUTSIDE the cgroup, firing after a delay long enough for the caller to finish
+# its turn and flush the reply. Usage: cmd_safe_restart [delay_seconds]
+cmd_safe_restart() {
+  local delay="${1:-8}"
+  if has_service && command -v systemd-run &>/dev/null; then
+    sudo systemd-run --on-active="${delay}" --unit=wc-deferred-restart \
+      --collect systemctl restart "$SERVICE_NAME" 2>/dev/null \
+      && ok "Restart scheduled in ${delay}s (detached — this session survives)" \
+      || { warn "systemd-run failed, falling back to inline restart"; cmd_restart; }
+  else
+    cmd_restart
+  fi
+}
+
 cmd_status() {
   echo ""
   echo -e "  ${BOLD}WildClaude Status${NC}"
@@ -566,6 +584,7 @@ case "${1:-help}" in
   start)      cmd_start ;;
   stop)       cmd_stop ;;
   restart)    cmd_restart ;;
+  safe-restart) shift; cmd_safe_restart "$@" ;;
   status)     cmd_status ;;
   upgrade|update) cmd_upgrade ;;
   logs|log)   shift; cmd_logs "$@" ;;
