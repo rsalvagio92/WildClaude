@@ -137,21 +137,33 @@ export default {
     }
     initRecognition();
 
-    // ── SSE listener ─────────────────────────────────────────────────────
-    sseUnsub = onSSE('chunk', (data) => {
-      if (!currentBotBubble) return;
-      fullBotText += data.text || '';
-      currentBotBubble.textContent = fullBotText;
-      transcript.scrollTop = transcript.scrollHeight;
+    // ── SSE listeners ────────────────────────────────────────────────────
+    // The bot emits ONE assistant_message with the full content (no token
+    // streaming). progress events update the status line while it thinks.
+    const unsubProgress = onSSE('progress', (data) => {
+      if (currentBotBubble) setStatus('thinking', data.description || 'Penso…');
     });
 
-    const sseUnsubDone = onSSE('done', async (data) => {
+    const unsubAssistant = onSSE('assistant_message', async (data) => {
       if (!currentBotBubble) return;
+      const text = data.content || '';
+      currentBotBubble.textContent = text || '(vuoto)';
+      transcript.scrollTop = transcript.scrollHeight;
       abortBtn.style.display = 'none';
       currentBotBubble = null;
-      if (fullBotText.trim()) await speak(fullBotText);
-      fullBotText = '';
+      if (text.trim()) await speak(stripMarkdown(text));
+      else { setStatus('idle', 'Pronto'); micBtn.disabled = false; }
     });
+
+    const unsubError = onSSE('error', (data) => {
+      if (currentBotBubble) currentBotBubble.textContent = '⚠️ ' + (data.content || 'Errore');
+      currentBotBubble = null;
+      abortBtn.style.display = 'none';
+      micBtn.disabled = false;
+      setStatus('idle', 'Pronto');
+    });
+
+    sseUnsub = () => { unsubProgress(); unsubAssistant(); unsubError(); };
 
     // ── Mic button ───────────────────────────────────────────────────────
     function setMicState(active) {
@@ -194,13 +206,27 @@ export default {
     // Cleanup on unmount
     view._vcCleanup = () => {
       if (sseUnsub) sseUnsub();
-      if (sseUnsubDone) sseUnsubDone();
       if (recognition) try { recognition.abort(); } catch {}
+      try { audioEl.pause(); } catch {}
     };
     const origUnmount = view.unmount;
     view.unmount = () => { view._vcCleanup?.(); origUnmount?.(); };
   },
 };
+
+// Strip markdown so the TTS reads clean prose, not asterisks and backticks.
+function stripMarkdown(t) {
+  return t
+    .replace(/```[\s\S]*?```/g, ' blocco di codice ')
+    .replace(/`([^`]+)`/g, '$1')
+    .replace(/^#{1,6}\s+/gm, '')
+    .replace(/\*\*([^*]+)\*\*/g, '$1')
+    .replace(/\*([^*]+)\*/g, '$1')
+    .replace(/^\s*[-*]\s+/gm, '')
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+    .replace(/\n{2,}/g, '. ')
+    .trim();
+}
 
 // ── Inline styles (scoped) ────────────────────────────────────────────────────
 function injectStyles() {
