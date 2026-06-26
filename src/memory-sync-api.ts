@@ -147,6 +147,24 @@ export function registerSyncRoutes(app: Hono, syncToken?: string): void {
     }
   });
 
+  // GET /api/sync/project-context?chatId=X — the primary resolves the chat's
+  // active project (or infers it) and renders the full project reference block
+  // (repos/env/KB/secret availability). Secondaries inject this so they answer
+  // project questions with the same context the primary has, instead of reading
+  // their own (empty) local projects dir.
+  app.get('/api/sync/project-context', gate, async (c) => {
+    const chatId = c.req.query('chatId') || '';
+    try {
+      const { getActiveProjectOrInfer, buildProjectReference } = await import('./projects.js');
+      const activeId = getActiveProjectOrInfer(chatId);
+      if (!activeId) return c.json({ projectId: null, reference: null });
+      return c.json({ projectId: activeId, reference: buildProjectReference(activeId) || null });
+    } catch (err) {
+      logger.error({ err, chatId }, 'Sync: project-context failed');
+      return c.json({ error: 'Fetch failed' }, 500);
+    }
+  });
+
   // POST /api/sync/outbox/flush (secondary calls on reconnect)
   app.post('/api/sync/outbox/flush', gate, async (c) => {
     if (isSecondary()) {

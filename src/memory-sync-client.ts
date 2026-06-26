@@ -148,6 +148,17 @@ export async function getRemoteBlocks(scope = 'user'): Promise<any[]> {
   }
 }
 
+/** Secondary: fetch the primary's rendered project-context block for a chat. */
+export async function getRemoteProjectContext(chatId: string): Promise<string | null> {
+  try {
+    const res = await request('GET', `/api/sync/project-context?chatId=${encodeURIComponent(chatId)}`);
+    return res.reference || null;
+  } catch (err) {
+    logger.warn({ err, chatId }, 'Remote project context fetch failed');
+    return null;
+  }
+}
+
 export async function registerWithPrimary(): Promise<boolean> {
   if (!isSecondary()) return false;
 

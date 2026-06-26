@@ -798,9 +798,17 @@ export async function handleMessage(ctx: Context, message: string, forceVoiceRep
     // assistant works with full project context (repos, env, KB, secret availability).
     let projectRef = '';
     try {
-      const { getActiveProjectOrInfer, buildProjectReference } = await import('./projects.js');
-      const activeId = getActiveProjectOrInfer(String(chatId));
-      if (activeId) projectRef = buildProjectReference(activeId) || '';
+      const { isSecondary } = await import('./config-role.js');
+      if (isSecondary()) {
+        // Projects live on the primary; pull the rendered context so the
+        // secondary answers project questions with full KB/env context.
+        const { getRemoteProjectContext } = await import('./memory-sync-client.js');
+        projectRef = (await getRemoteProjectContext(String(chatId))) || '';
+      } else {
+        const { getActiveProjectOrInfer, buildProjectReference } = await import('./projects.js');
+        const activeId = getActiveProjectOrInfer(String(chatId));
+        if (activeId) projectRef = buildProjectReference(activeId) || '';
+      }
     } catch { /* projects optional */ }
     // Knowledge wiki: inject any article whose topic is mentioned (cheap string
     // match, capped). Durable, curated reference that doesn't decay.
