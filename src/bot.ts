@@ -2566,6 +2566,17 @@ async function processDashboardMessage(
   emitChatEvent({ type: 'user_message', chatId: chatIdStr, content: text, source: 'dashboard' });
   setProcessing(chatIdStr, true);
 
+  // Mirror the user's message to Telegram so the conversation stays unified
+  // across surfaces (e.g. speaking in the dashboard Voice Chat shows up on
+  // Telegram too). Best-effort — never block processing on a relay failure.
+  if (text.trim()) {
+    try {
+      await botApi.sendMessage(parseInt(chatIdStr), `💬 ${escapeHtml(text)}`, { parse_mode: 'HTML' });
+    } catch (relayErr) {
+      logger.warn({ err: relayErr }, 'Failed to mirror dashboard message to Telegram');
+    }
+  }
+
   try {
     const sessionId = getSession(chatIdStr, AGENT_ID);
 
