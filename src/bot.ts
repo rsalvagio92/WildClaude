@@ -2656,6 +2656,18 @@ async function processDashboardMessage(
       }
     }
 
+    // Dual-deliver to Expo push (best-effort — never block on this)
+    void import('./push/index.js').then(({ pushNotify }) => {
+      return pushNotify({
+        title: 'WildClaude',
+        body: responseText.length > 200 ? responseText.slice(0, 197) + '…' : responseText,
+        category: 'chat',
+        data: { sessionId: chatIdStr, source: 'dashboard' },
+      });
+    }).catch((pushErr: unknown) => {
+      logger.debug({ err: pushErr }, 'push: dual-deliver failed (non-fatal)');
+    });
+
     // Log token usage
     if (result.usage) {
       const activeSessionId = result.newSessionId ?? sessionId;

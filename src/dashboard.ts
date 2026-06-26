@@ -81,6 +81,8 @@ import { DEFAULT_AUTOMATIONS, syncAutomations } from './automations.js';
 import { registerExternalDashboardRoutes } from './external-dashboards.js';
 import { registerDashboardV2Routes } from './dashboards-v2.js';
 import { registerProjectRoutes } from './projects.js';
+import { registerVoiceRoutes } from './voice-routes.js';
+import { registerDevice, setDevicePrefs, getDevice, listDevices, removeDevice, isValidExpoToken } from './push/index.js';
 import { registerHermesRoutes } from './dashboard-hermes.js';
 import { getTelegramConnected, getBotInfo, chatEvents, getIsProcessing, abortActiveQuery, ChatEvent } from './state.js';
 
@@ -240,6 +242,74 @@ export function startDashboard(botApi?: Api<RawApi>): void {
 
   // Issue a short-lived ticket (caller is already authed by the middleware above).
   app.post('/api/ticket', (c) => c.json({ ticket: issueTicket(), expiresInMs: 60_000 }));
+
+  // ── Push notification endpoints ──────────────────────────────────────
+
+  // POST /api/push/register — register or refresh an Expo push device.
+  // Body: { token, platform?, deviceName?, prefs? }. Idempotent on token.
+  app.post('/api/push/register', async (c) => {
+    const body = await c.req.json<{
+      token?: string;
+      platform?: string;
+      deviceName?: string;
+      prefs?: { enabled?: boolean; categories?: Record<string, boolean> };
+    }>().catch(() => null);
+    if (!body || !isValidExpoToken(body.token)) {
+      return c.json({ error: 'valid Expo push token required' }, 400);
+    }
+    try {
+      const device = registerDevice({
+        token: body.token!,
+        platform: body.platform,
+        deviceName: body.deviceName,
+        prefs: body.prefs,
+      });
+      return c.json({ ok: true, device }, 201);
+    } catch (err) {
+      return c.json({ error: err instanceof Error ? err.message : String(err) }, 400);
+    }
+  });
+
+  // DELETE /api/push/register — unregister a device (logout / toggle off).
+  // Body: { token } (or ?token=).
+  app.delete('/api/push/register', async (c) => {
+    const body = await c.req.json<{ token?: string }>().catch(() => null);
+    const token = body?.token || c.req.query('token');
+    if (!token) return c.json({ error: 'token required' }, 400);
+    const removed = removeDevice(token);
+    return c.json({ ok: true, removed });
+  });
+
+  // GET /api/push/prefs?token=... — read a device's current preferences.
+  app.get('/api/push/prefs', (c) => {
+    const token = c.req.query('token');
+    if (!token) return c.json({ error: 'token required' }, 400);
+    const device = getDevice(token);
+    if (!device) return c.json({ error: 'device not found' }, 404);
+    return c.json({ token: device.token, enabled: device.enabled, prefs: device.prefs });
+  });
+
+  // POST /api/push/prefs — update a device's preferences.
+  // Body: { token, enabled?, categories? }.
+  app.post('/api/push/prefs', async (c) => {
+    const body = await c.req.json<{
+      token?: string;
+      enabled?: boolean;
+      categories?: Record<string, boolean>;
+    }>().catch(() => null);
+    if (!body?.token) return c.json({ error: 'token required' }, 400);
+    if (body.enabled === undefined && body.categories === undefined) {
+      return c.json({ error: 'nothing to update (enabled or categories required)' }, 400);
+    }
+    const device = setDevicePrefs(body.token, { enabled: body.enabled, categories: body.categories });
+    if (!device) return c.json({ error: 'device not found' }, 404);
+    return c.json({ ok: true, token: device.token, enabled: device.enabled, prefs: device.prefs });
+  });
+
+  // GET /api/push/devices — list registered devices (debugging / overview).
+  app.get('/api/push/devices', (c) => {
+    return c.json({ devices: listDevices() });
+  });
 
   // Scheduled tasks
   app.get('/api/tasks', (c) => {
@@ -822,6 +892,8 @@ export function startDashboard(botApi?: Api<RawApi>): void {
       agentId: AGENT_ID,
       role,
       capabilities: caps,
+      // Chat streaming gateway discovery (additive — older clients ignore it).
+      wsChat: (await import('./ws-chat.js')).wsChatInfo(),
     });
   });
 
@@ -1617,6 +1689,10 @@ export function startDashboard(botApi?: Api<RawApi>): void {
       return c.json({ error: msg }, 500);
     }
   });
+
+  // POST /api/voice/stt — transcribe an audio blob → { text } (mobile app).
+  // Registered via voice-routes.ts so the handler is unit-testable.
+  registerVoiceRoutes(app);
 
   // ── File Explorer ──────────────────────────────────────────────────
 
