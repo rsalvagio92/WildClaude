@@ -9,7 +9,15 @@
     "newArchEnabled": true,
     "android": {
       "package": "ai.wildclaude.app",
-      "permissions": ["RECORD_AUDIO", "CAMERA", "INTERNET", "POST_NOTIFICATIONS"]
+      "permissions": [
+        "RECORD_AUDIO",
+        "CAMERA",
+        "INTERNET",
+        "POST_NOTIFICATIONS",
+        "android.permission.CAMERA",
+        "android.permission.RECORD_AUDIO",
+        "android.permission.MODIFY_AUDIO_SETTINGS"
+      ]
     },
     "ios": {
       "bundleIdentifier": "ai.wildclaude.app",
@@ -26,6 +34,14 @@
       "expo-audio",
       "expo-notifications"
     ],
-    "experiments": { "typedRoutes": true }
+    "experiments": {
+      "typedRoutes": true
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "759e8b73-c05e-421c-9fb2-e4ff806740ff"
+      }
+    }
   }
 }
