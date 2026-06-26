@@ -118,7 +118,31 @@ reflections, scheduled task results, skill/agent proposals, fleet alerts). The a
 - **Builds:** EAS (already configured for the org); APK preview + Expo Go via Tailscale for dev,
   same flow as WildNomads.
 
-## 8. Open decisions
-1. Repo strategy (sibling repo vs `app/` in monorepo).
-2. Transport: Tailscale real cert (recommended) vs ship-pinned self-signed.
-3. Keep Telegram as permanent fallback, or full cutover after Phase 1?
+## 8. Decisions (locked 2026-06-26)
+1. **Repo:** `app/` inside this monorepo — versions lockstep with the API, types from `src/sdk`.
+2. **Transport:** Tailscale real cert first, **with a self-signed option** retained (pinning) for
+   pure-LAN / no-Tailscale setups. App supports both; server exposes which is active.
+3. **Telegram:** stays fully working for now (dual-delivery). No cutover until explicitly chosen.
+
+## 9. Modularity (core requirement)
+
+Every feature must be independently enable/disable-able — both per-install and at runtime.
+
+- **Manifest-driven:** a single `app/src/features/manifest.ts` lists every feature module
+  (`{ id, title, icon, group, enabledByDefault, requiresServerCap }`). Navigation, screens, and
+  push subscriptions are all derived from the manifest — adding/removing a feature is one entry.
+- **Runtime toggles:** a Settings → Features screen flips features on/off; persisted in MMKV and
+  (optionally) synced to the server per-device. Disabled features are not mounted, not fetched,
+  not navigable — zero cost when off.
+- **Server capability gating:** the app reads `GET /api/info` (server features/flags) and hides
+  modules the connected server doesn't support (e.g. voice off if no ElevenLabs key, fleet off on
+  a single-node install). Mirrors the existing `src/lib/config/features.ts` philosophy on web.
+- **Lazy loading:** each feature is a lazily-imported route (like the web SPA's per-nav import) so a
+  broken/disabled module never blocks app start.
+
+## 10. Build approach
+- Work on branch **`feat/mobile-app`** (server `master` stays safe; Telegram keeps running).
+- **Phase 0 built directly** (greenfield scaffold + modular backbone — architecture-heavy).
+- **Ralph loop** used for high-repetition parity work (esp. Phase 3's 9 modules) in a sandbox on
+  the branch, with a per-phase `fix_plan.md` checklist. Never run Ralph with `local` sandbox against
+  live `src/` while the server is up — server edits land via normal reviewed commits + safe-restart.
