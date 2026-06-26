@@ -58,8 +58,13 @@ export default {
     let isSpeaking = false;
     let isThinking = false;
     let currentBotBubble = null;
-    let audioStopper = null; // resolves the speak() promise to end playback early
+    let resolveCurrent = null; // resolves the in-flight playback promise
+    let playToken = 0;         // bumped on each new/stopped playback to supersede older ones
+    let ackTimer = null;       // fires a short spoken ack if a task runs long
     let sseUnsub = null;
+
+    const ACK_DELAY_MS = 2500;
+    const ACK_PHRASES = ['Okay, ci sto lavorando.', 'Dammi un secondo.', 'Ci penso un attimo.'];
 
     function setStatus(dot, label) {
       statusDot.className = 'vc-dot ' + dot;
@@ -74,10 +79,15 @@ export default {
     }
 
     // ── TTS ──────────────────────────────────────────────────────────────
-    async function speak(text) {
+    // Token-based so a newer playback (e.g. the real answer) cleanly supersedes
+    // an older one (e.g. the "ci sto lavorando" ack) without audio overlap.
+    async function speak(text, opts = {}) {
+      const { ack = false, label = 'Rispondo… (premi il mic per interrompere)' } = opts;
       if (!text.trim()) return;
+      const token = ++playToken;
+      stopCurrentAudio(); // halt whatever is playing, resolve its promise
       isSpeaking = true;
-      setStatus('speaking', 'Rispondo… (premi il mic per interrompere)');
+      setStatus('speaking', label);
       stopBtn.textContent = '⏹ Stop voce';
       stopBtn.style.display = '';
       micBtn.disabled = false; // allow barge-in while speaking
@@ -89,37 +99,50 @@ export default {
           headers: { 'Content-Type': 'application/json', ...(tok ? { Authorization: `Bearer ${tok}` } : {}) },
           body: JSON.stringify({ text }),
         });
+        if (token !== playToken) return; // superseded while fetching
         if (!res.ok) {
-          const msg = await res.json().then(j => j.error).catch(() => `HTTP ${res.status}`);
-          toastErr('TTS: ' + msg);
+          if (!ack) {
+            const msg = await res.json().then(j => j.error).catch(() => `HTTP ${res.status}`);
+            toastErr('TTS: ' + msg);
+          }
           return;
         }
         const blob = await res.blob();
+        if (token !== playToken) return;
         audioEl.src = URL.createObjectURL(blob);
         audioEl.playbackRate = speed;
         await audioEl.play().catch(() => {});
         audioEl.playbackRate = speed; // some browsers reset on play()
         await new Promise(r => {
-          audioStopper = r;
+          resolveCurrent = r;
           audioEl.onended = r;
           audioEl.onerror = r;
           safety = setTimeout(r, 120_000);
         });
       } catch (err) {
-        toastErr('TTS: ' + (err?.message || err));
+        if (!ack) toastErr('TTS: ' + (err?.message || err));
       } finally {
         clearTimeout(safety);
-        audioStopper = null;
-        isSpeaking = false;
-        stopBtn.style.display = 'none';
-        if (!isListening && !isThinking) setStatus('idle', 'Pronto');
-        micBtn.disabled = false;
+        if (token === playToken) {
+          resolveCurrent = null;
+          isSpeaking = false;
+          stopBtn.style.display = 'none';
+          if (!isListening && !isThinking) setStatus('idle', 'Pronto');
+          micBtn.disabled = false;
+        }
       }
     }
 
-    function stopSpeaking() {
+    function stopCurrentAudio() {
       try { audioEl.pause(); audioEl.currentTime = 0; } catch {}
-      if (audioStopper) { const r = audioStopper; audioStopper = null; r(); }
+      if (resolveCurrent) { const r = resolveCurrent; resolveCurrent = null; r(); }
+    }
+
+    function stopSpeaking() {
+      playToken++; // supersede any in-flight speak() so its finally is a no-op
+      stopCurrentAudio();
+      isSpeaking = false;
+      stopBtn.style.display = 'none';
     }
 
     // ── STT setup ────────────────────────────────────────────────────────
@@ -159,6 +182,15 @@ export default {
 
         try {
           await api.post('/api/chat/send', { message: said });
+          // Long-task ack: if still thinking after a beat, say something short
+          // so the conversation feels responsive instead of going silent.
+          clearTimeout(ackTimer);
+          ackTimer = setTimeout(() => {
+            if (isThinking && !isSpeaking) {
+              const phrase = ACK_PHRASES[Math.floor((Date.now() / 1000) % ACK_PHRASES.length)];
+              speak(phrase, { ack: true, label: 'Un momento…' });
+            }
+          }, ACK_DELAY_MS);
         } catch (err) {
           toastErr('Invio fallito');
           isThinking = false;
@@ -186,20 +218,23 @@ export default {
 
     const unsubAssistant = onSSE('assistant_message', async (data) => {
       if (!currentBotBubble) return;
+      clearTimeout(ackTimer);
       const text = data.content || '';
       currentBotBubble.textContent = text || '(vuoto)';
       transcript.scrollTop = transcript.scrollHeight;
       currentBotBubble = null;
       isThinking = false;
+      // The real answer supersedes any ack still playing (token bump in speak()).
       if (text.trim()) await speak(stripMarkdown(text));
-      else { setStatus('idle', 'Pronto'); micBtn.disabled = false; stopBtn.style.display = 'none'; }
+      else { stopSpeaking(); setStatus('idle', 'Pronto'); micBtn.disabled = false; }
     });
 
     const unsubError = onSSE('error', (data) => {
+      clearTimeout(ackTimer);
       if (currentBotBubble) currentBotBubble.textContent = '⚠️ ' + (data.content || 'Errore');
       currentBotBubble = null;
       isThinking = false;
-      stopBtn.style.display = 'none';
+      stopSpeaking();
       micBtn.disabled = false;
       setStatus('idle', 'Pronto');
     });
@@ -214,6 +249,7 @@ export default {
 
     function startListening() {
       if (isListening || micBtn.disabled) return;
+      clearTimeout(ackTimer);
       if (isSpeaking) stopSpeaking(); // barge-in: interrupt the reply and listen
       isListening = true;
       setMicState(true);
@@ -235,7 +271,8 @@ export default {
 
     // Stop button: stop voice if speaking, else abort the in-flight reply
     stopBtn.addEventListener('click', async () => {
-      if (isSpeaking) { stopSpeaking(); return; }
+      if (isSpeaking) { stopSpeaking(); setStatus('idle', 'Pronto'); return; }
+      clearTimeout(ackTimer);
       await api.post('/api/chat/abort', {}).catch(() => {});
       if (recognition) try { recognition.stop(); } catch {}
       isListening = false;
@@ -248,6 +285,7 @@ export default {
 
     // Cleanup on unmount
     view._vcCleanup = () => {
+      clearTimeout(ackTimer);
       if (sseUnsub) sseUnsub();
       if (recognition) try { recognition.abort(); } catch {}
       try { audioEl.pause(); } catch {}
