@@ -8,6 +8,9 @@
       "distribution": "internal",
       "android": {
         "buildType": "apk"
+      },
+      "env": {
+        "EXPO_USE_STATIC_METRO_RUNTIME": "0"
       }
     },
     "production": {
