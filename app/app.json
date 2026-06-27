@@ -31,7 +31,6 @@
       "expo-router",
       "expo-secure-store",
       "expo-camera",
-      "expo-audio",
       "expo-notifications",
       [
         "expo-build-properties",
