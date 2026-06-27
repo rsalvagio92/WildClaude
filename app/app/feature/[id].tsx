@@ -33,8 +33,10 @@ export default function FeatureScreen() {
   if (def.id === 'missions') return <Redirect href="/missions" />;
   if (def.id === 'automation') return <Redirect href="/automation" />;
 
-  // Phase 4 — Dashboards
+  // Phase 4 — Dashboards & Ecosystem
   if (def.id === 'dashboards') return <Redirect href="/dashboards" />;
+  if (def.id === 'skills') return <Redirect href="/skills" />;
+  if (def.id === 'projects') return <Redirect href="/projects" />;
 
   // System
   if (def.id === 'settings') return <FeaturesSettings />;

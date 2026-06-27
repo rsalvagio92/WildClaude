@@ -25,6 +25,7 @@ export type FeatureGroup =
   | 'Knowledge'
   | 'Agents'
   | 'Dashboards'
+  | 'Ecosystem'
   | 'System';
 
 export interface FeatureDef {
@@ -60,12 +61,15 @@ export const FEATURES: FeatureDef[] = [
 
   { id: 'dashboards', title: 'Dashboards',    icon: '📊', group: 'Dashboards', enabledByDefault: true,  requiresServerCap: ['dashboards'],  phase: 4 },
 
+  { id: 'skills',     title: 'Skills & MCP',  icon: '🧩', group: 'Ecosystem',  enabledByDefault: true,  requiresServerCap: ['agents'],      phase: 4 },
+  { id: 'projects',   title: 'Progetti',      icon: '📂', group: 'Ecosystem',  enabledByDefault: false, requiresServerCap: [],              phase: 4 },
+
   { id: 'notifications', title: 'Notifiche',  icon: '🔔', group: 'System',     enabledByDefault: true,  requiresServerCap: ['chat'],        phase: 1 },
   { id: 'settings',   title: 'Settings',      icon: '⚙️', group: 'System',     enabledByDefault: true,  requiresServerCap: [],              phase: 0 },
 ];
 
 export const FEATURE_GROUP_ORDER: FeatureGroup[] = [
-  'Talk', 'Fleet', 'Monitor', 'Knowledge', 'Agents', 'Dashboards', 'System',
+  'Talk', 'Fleet', 'Monitor', 'Knowledge', 'Agents', 'Dashboards', 'Ecosystem', 'System',
 ];
 
 export function getFeature(id: string): FeatureDef | undefined {
