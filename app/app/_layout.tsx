@@ -8,6 +8,10 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import * as Notifications from 'expo-notifications';
 import { useServers } from '@/store/servers';
 import { ServerClient } from '@/api/client';
+import { ErrorBoundary } from '@/lib/ErrorBoundary';
+import { OfflineBanner } from '@/lib/OfflineBanner';
+import { useServerPoller } from '@/lib/offline';
+import { useDeepLinks } from '@/lib/deeplinks';
 
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
@@ -20,13 +24,24 @@ Notifications.setNotificationHandler({
 });
 
 const queryClient = new QueryClient({
-  defaultOptions: { queries: { retry: 1, staleTime: 10_000 } },
+  defaultOptions: {
+    queries: {
+      retry: 1,
+      staleTime: 15_000,
+      gcTime: 5 * 60_000,       // keep cache 5 min so offline reads work
+      networkMode: 'offlineFirst', // return cached data immediately, revalidate in bg
+    },
+  },
 });
 
-export default function RootLayout() {
+function AppCore() {
   const active = useServers((s) => s.active());
   const setInfo = useServers((s) => s.setInfo);
   const registeredServerId = useRef<string | null>(null);
+
+  // Phase 5: deep link pairing + server poller
+  useDeepLinks();
+  useServerPoller();
 
   // Probe the active server for capabilities whenever it changes.
   useEffect(() => {
@@ -73,13 +88,24 @@ export default function RootLayout() {
   }, [active?.id]);
 
   return (
-    <GestureHandlerRootView style={{ flex: 1 }}>
-      <SafeAreaProvider>
-        <QueryClientProvider client={queryClient}>
-          <StatusBar style="light" />
-          <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: '#0b0b12' } }} />
-        </QueryClientProvider>
-      </SafeAreaProvider>
-    </GestureHandlerRootView>
+    <>
+      <StatusBar style="light" />
+      <OfflineBanner />
+      <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: '#0b0b12' } }} />
+    </>
+  );
+}
+
+export default function RootLayout() {
+  return (
+    <ErrorBoundary>
+      <GestureHandlerRootView style={{ flex: 1 }}>
+        <SafeAreaProvider>
+          <QueryClientProvider client={queryClient}>
+            <AppCore />
+          </QueryClientProvider>
+        </SafeAreaProvider>
+      </GestureHandlerRootView>
+    </ErrorBoundary>
   );
 }
