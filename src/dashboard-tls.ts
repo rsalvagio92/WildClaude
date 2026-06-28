@@ -26,7 +26,8 @@ export interface TlsPair { key: string; cert: string; }
 const KEY_PATH = path.join(USER_DATA_DIR, 'dashboard-tls.key');
 const CERT_PATH = path.join(USER_DATA_DIR, 'dashboard-tls.crt');
 
-function localIPv4s(): string[] {
+/** Non-internal IPv4 addresses of this host (LAN + Tailscale, etc.). */
+export function localIPv4s(): string[] {
   const out: string[] = [];
   const ifaces = os.networkInterfaces();
   for (const list of Object.values(ifaces)) {

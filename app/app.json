@@ -32,7 +32,16 @@
       "expo-secure-store",
       "expo-camera",
       "expo-audio",
-      "expo-notifications"
+      "expo-notifications",
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "usesCleartextTraffic": true
+          }
+        }
+      ],
+      "./plugins/withSelfSignedTrust.js"
     ],
     "experiments": {
       "typedRoutes": true
