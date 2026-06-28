@@ -8,7 +8,9 @@
 
 import { AudioModule, RecordingPresets, setAudioModeAsync } from 'expo-audio';
 import type { AudioRecorder } from 'expo-audio';
-import * as FileSystem from 'expo-file-system';
+// SDK 54: the classic file API (uploadAsync / FileSystemUploadType / deleteAsync)
+// moved behind the /legacy entry; the new File/Directory API doesn't cover uploads.
+import * as FileSystem from 'expo-file-system/legacy';
 import { useServers } from '@/store/servers';
 
 export type RecordingStatus = 'idle' | 'recording' | 'uploading' | 'error';

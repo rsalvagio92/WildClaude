@@ -15,7 +15,8 @@
  */
 
 import { createAudioPlayer, setAudioModeAsync, type AudioPlayer, type AudioStatus } from 'expo-audio';
-import * as FileSystem from 'expo-file-system';
+// SDK 54: cacheDirectory / EncodingType / writeAsStringAsync live in /legacy now.
+import * as FileSystem from 'expo-file-system/legacy';
 import { useServers } from '@/store/servers';
 
 export type PlaybackStatus = 'idle' | 'loading' | 'playing' | 'paused';
