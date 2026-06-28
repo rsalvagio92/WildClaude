@@ -7,8 +7,9 @@ import { createServer as createHttpsServer } from 'node:https';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { AGENT_ID, ALLOWED_CHAT_ID, DASHBOARD_PORT, DASHBOARD_TOKEN, DASHBOARD_HOST, DASHBOARD_HTTPS, PROJECT_ROOT, STORE_DIR, WHATSAPP_ENABLED, SLACK_USER_TOKEN, CONTEXT_LIMIT, agentDefaultModel } from './config.js';
-import { getOrCreateDashboardCert } from './dashboard-tls.js';
+import { AGENT_ID, ALLOWED_CHAT_ID, DASHBOARD_PORT, DASHBOARD_TOKEN, DASHBOARD_HOST, DASHBOARD_HTTPS, DASHBOARD_URL, PROJECT_ROOT, STORE_DIR, WHATSAPP_ENABLED, SLACK_USER_TOKEN, CONTEXT_LIMIT, agentDefaultModel } from './config.js';
+import { getOrCreateDashboardCert, localIPv4s } from './dashboard-tls.js';
+import { qrSvg } from './qr.js';
 import crypto from 'crypto';
 import {
   getAllScheduledTasks,
@@ -894,6 +895,58 @@ export function startDashboard(botApi?: Api<RawApi>): void {
       capabilities: caps,
       // Chat streaming gateway discovery (additive — older clients ignore it).
       wsChat: (await import('./ws-chat.js')).wsChatInfo(),
+    });
+  });
+
+  // GET /api/pairing — everything the mobile app needs to connect, with the
+  // server's reachable address auto-proposed. Protected by the /api/* token
+  // middleware, so exposing the token here requires an already-authed dashboard.
+  app.get('/api/pairing', async (c) => {
+    const scheme = DASHBOARD_HTTPS ? 'https' : 'http';
+
+    // Rank reachable hosts: Tailscale (100.64.0.0/10 — routable from anywhere)
+    // first, then private LAN, then anything else.
+    const isTailscale = (ip: string) => /^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./.test(ip);
+    const isPrivate = (ip: string) => /^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(ip);
+    const rank = (ip: string) => (isTailscale(ip) ? 0 : isPrivate(ip) ? 1 : 2);
+    const ips = localIPv4s().sort((a, b) => rank(a) - rank(b));
+
+    const candidates: string[] = [];
+    if (DASHBOARD_URL) candidates.push(DASHBOARD_URL.replace(/\/+$/, ''));
+    for (const ip of ips) candidates.push(`${scheme}://${ip}:${DASHBOARD_PORT}`);
+    if (!candidates.length) candidates.push(`${scheme}://localhost:${DASHBOARD_PORT}`);
+
+    // Let the dashboard pick a specific address (?url=); fall back to the best one.
+    const requested = c.req.query('url');
+    const url = requested && candidates.includes(requested) ? requested : candidates[0];
+
+    // Self-signed cert fingerprint, for future cert pinning (HTTPS only, best-effort).
+    let certSha256: string | undefined;
+    if (DASHBOARD_HTTPS) {
+      try {
+        const tls = getOrCreateDashboardCert(DASHBOARD_HOST);
+        if (tls) certSha256 = new crypto.X509Certificate(tls.cert).fingerprint256.replace(/:/g, '').toLowerCase();
+      } catch { /* fingerprint is optional */ }
+    }
+
+    const { getBotIdentity } = await import('./overlay.js');
+    const name = getBotIdentity().name || 'WildClaude';
+
+    // The QR carries the deep link so a generic camera can tap-to-open the app;
+    // the in-app scanner accepts this form too (see app/src/lib/pair.ts).
+    const q = (s: string) => encodeURIComponent(s);
+    const deepLink =
+      `wildclaude://pair?url=${q(url)}&token=${q(DASHBOARD_TOKEN)}&name=${q(name)}` +
+      (certSha256 ? `&cert=${certSha256}` : '');
+
+    return c.json({
+      url,
+      token: DASHBOARD_TOKEN,
+      name,
+      certSha256,
+      candidates,
+      deepLink,
+      qrSvg: qrSvg(deepLink, { margin: 2, size: 280 }),
     });
   });
 

@@ -33,14 +33,27 @@ export class ServerClient {
 
   async request<T>(method: string, path: string, body?: unknown): Promise<T> {
     let res: Response;
+    // Without a timeout, fetch hangs indefinitely when the host is reachable at
+    // IP level but the port is filtered / not yet listening (e.g. the dashboard's
+    // bind delay after a restart) — the UI would sit on "Verifico…" forever.
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 12_000);
     try {
       res = await fetch(`${this.server.url}${path}`, {
         method,
         headers: this.headers(),
         body: body ? JSON.stringify(body) : undefined,
+        signal: controller.signal,
       });
     } catch (e) {
-      throw new ApiError(0, 'Network error — server unreachable?');
+      throw new ApiError(
+        0,
+        controller.signal.aborted
+          ? 'Timeout: nessuna risposta entro 12s. URL/porta corretti? Telefono sulla stessa rete o su Tailscale?'
+          : 'Rete non raggiungibile — server offline, oppure HTTP bloccato (usa https o abilita cleartext).',
+      );
+    } finally {
+      clearTimeout(timeout);
     }
     const ct = res.headers.get('content-type') || '';
     const payload = ct.includes('application/json') ? await res.json().catch(() => null) : await res.text();

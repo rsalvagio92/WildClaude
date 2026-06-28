@@ -12,6 +12,7 @@ const TABS = [
   { id: 'profile', label: 'Profile' },
   { id: 'verbosity', label: 'Verbosity' },
   { id: 'import', label: 'Import' },
+  { id: 'pairing', label: '📱 Mobile' },
   { id: 'info', label: 'System Info' },
 ];
 
@@ -48,6 +49,7 @@ export default {
       profile: renderProfile,
       verbosity: renderVerbosity,
       import: renderImport,
+      pairing: renderPairing,
       info: renderInfo,
     };
 
@@ -404,6 +406,56 @@ function renderImport(container) {
 }
 
 // ── System Info ────────────────────────────────────────────────────────
+// ── Mobile pairing ───────────────────────────────────────────────────────
+function renderPairing(container) {
+  let selectedUrl = null; // chosen address; null = let the server pick the best
+  asyncView(container, async () => {
+    const qs = selectedUrl ? '?url=' + encodeURIComponent(selectedUrl) : '';
+    return api.get('/api/pairing' + qs);
+  }, (data, rerun) => {
+    selectedUrl = data.url;
+
+    const copyBtn = (label, text) => el('button.btn.btn-sm', {
+      text: 'Copia',
+      onclick: async () => {
+        try { await navigator.clipboard.writeText(text); toastOk(label + ' copiato'); }
+        catch { toastErr('Copia non riuscita'); }
+      },
+    });
+    const codeRow = (label, text) => el('div.field', {}, [
+      el('label', { text: label }),
+      el('div.row', { style: 'gap:8px;align-items:center' }, [
+        el('code', { text, style: 'flex:1;overflow:auto;white-space:nowrap;padding:6px 8px;background:var(--surface,#16161f);border-radius:8px' }),
+        copyBtn(label, text),
+      ]),
+    ]);
+
+    const qr = el('div', {
+      style: 'background:#fff;padding:12px;border-radius:12px;width:max-content;max-width:100%;margin:8px auto',
+      html: data.qrSvg,
+    });
+
+    const addr = (data.candidates && data.candidates.length > 1)
+      ? field('Indirizzo server', el('select.input', {
+          onchange: (e) => { selectedUrl = e.target.value; rerun(); },
+        }, data.candidates.map((u) => el('option', { value: u, text: u, selected: u === data.url }))))
+      : codeRow('Indirizzo server', data.url);
+
+    const isHttp = String(data.url || '').startsWith('http://');
+
+    return card('📱 Accoppia l\'app mobile', [
+      el('p.muted', { text: 'Apri WildClaude sul telefono → Connetti un server → inquadra questo QR. In alternativa, copia URL e token per l\'inserimento manuale.' }),
+      qr,
+      addr,
+      codeRow('Token', data.token),
+      codeRow('Deep link', data.deepLink),
+      isHttp
+        ? el('p.muted', { style: 'margin-top:10px', text: '⚠️ Connessione HTTP in chiaro: l\'APK release la accetta solo con cleartext abilitato (già attivo in questa build). Per il microfono/voce serve HTTPS.' })
+        : el('p.muted', { style: 'margin-top:10px', text: 'ℹ️ HTTPS self-signed: l\'app potrebbe rifiutare il certificato finché il cert pinning non è attivo. Usa un cert valido (Tailscale/reverse proxy) se la connessione fallisce.' }),
+    ], el('button.icon-btn', { text: '⟳', onclick: rerun }));
+  });
+}
+
 function renderInfo(container) {
   asyncView(container, async () => {
     const [info, health] = await Promise.all([api.get('/api/info'), api.get('/api/health')]);
