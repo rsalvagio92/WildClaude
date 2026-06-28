@@ -8,3 +8,7 @@ android/
 *.orig.*
 web-build/
 expo-env.d.ts
+
+# Build outputs
+*.apk
+*.aab
