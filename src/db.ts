@@ -1509,8 +1509,11 @@ export function updateTaskAfterRun(
 }
 
 export function resetStuckTasks(agentId: string): number {
+  // Scheduled tasks only ever live in 'active' or 'running'. Anything else
+  // ('running' left by a crash, or a 'pending' row created mid-deploy) is
+  // orphaned — getDueTasks only fires 'active', so reset both back to active.
   const result = getDb().prepare(
-    `UPDATE scheduled_tasks SET status = 'active', started_at = NULL WHERE status = 'running' AND agent_id = ?`,
+    `UPDATE scheduled_tasks SET status = 'active', started_at = NULL WHERE status IN ('running', 'pending') AND agent_id = ?`,
   ).run(agentId);
   return result.changes;
 }
