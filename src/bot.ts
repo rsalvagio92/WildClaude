@@ -2333,13 +2333,13 @@ export function createBot(): Bot {
 
       // MEDIUM/COMPLEX: try to delegate to a secondary machine before buffering
       try {
-        const { getAvailableRemoteAgents, delegateToRemote, isRemoteBusy } = await import('./remote-delegate.js');
+        const { getAvailableRemoteAgents, delegateToRemote, pickLeastLoadedAgents } = await import('./remote-delegate.js');
         const allRemoteAgents = await getAvailableRemoteAgents();
-        // Pick first non-busy machine (parallel status checks, fast 3s timeout each)
-        const busyFlags = await Promise.all(allRemoteAgents.map(a => isRemoteBusy(a)));
-        const remoteAgents = allRemoteAgents.filter((_, i) => !busyFlags[i]);
+        // Probe all peers in parallel (3s timeout each) and rank by queue depth,
+        // least-loaded first — so we delegate to the freest machine, not a random one.
+        const remoteAgents = await pickLeastLoadedAgents(allRemoteAgents);
         if (remoteAgents.length > 0) {
-          const remoteAgent = remoteAgents[Math.floor(Math.random() * remoteAgents.length)];
+          const remoteAgent = remoteAgents[0];
           const ackMsg = await ctx.reply(
             `↗ <i>Queue piena — delegando a ${remoteAgent.name}…</i>`,
             { parse_mode: 'HTML' },

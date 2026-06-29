@@ -67,6 +67,25 @@ export interface RemoteTaskResult {
  * Times out in 3s so it never stalls the caller.
  */
 export async function isRemoteBusy(agent: RemoteAgent): Promise<boolean> {
+  const load = await getRemoteLoad(agent);
+  if (load === null) return false; // unreachable — delegateToRemote will discover that
+  return load.busy || load.queueDepth > 0;
+}
+
+export interface RemoteLoad {
+  busy: boolean;
+  /** Total pending work (telegram queue + in-flight remote tasks). */
+  queueDepth: number;
+  /** True if the machine answered the status probe at all. */
+  reachable: boolean;
+}
+
+/**
+ * Probe a remote machine's load. Returns null if unreachable.
+ * `queueDepth` lets the caller pick the least-loaded peer (not just any free one).
+ * Falls back gracefully if the peer runs older code without queueDepth/status.
+ */
+export async function getRemoteLoad(agent: RemoteAgent): Promise<RemoteLoad | null> {
   try {
     const fetchOpts: RequestInit & { agent?: unknown } = {
       headers: { 'Authorization': `Bearer ${agent.token}` },
@@ -74,12 +93,30 @@ export async function isRemoteBusy(agent: RemoteAgent): Promise<boolean> {
     };
     if (agent.url.startsWith('https://')) fetchOpts.agent = INSECURE_AGENT;
     const resp = await fetch(`${agent.url}/api/machine/status`, fetchOpts);
-    if (!resp.ok) return false; // assume available if status endpoint missing
-    const data = await resp.json() as { busy?: boolean; activeRemoteTasks?: number };
-    return !!(data.busy || (data.activeRemoteTasks ?? 0) > 0);
+    if (!resp.ok) {
+      // Old code without the status endpoint — assume reachable & idle.
+      return { busy: false, queueDepth: 0, reachable: true };
+    }
+    const data = await resp.json() as { busy?: boolean; activeRemoteTasks?: number; queueDepth?: number };
+    const busy = !!data.busy;
+    // queueDepth from new peers; fall back to activeRemoteTasks (+busy) for older ones.
+    const queueDepth = data.queueDepth ?? ((data.activeRemoteTasks ?? 0) + (busy ? 1 : 0));
+    return { busy, queueDepth, reachable: true };
   } catch {
-    return false; // timeout or unreachable — delegateToRemote will discover that
+    return null; // timeout or unreachable
   }
+}
+
+/**
+ * From the configured agents, return those that are reachable and not busy,
+ * sorted ascending by queue depth (least-loaded first).
+ */
+export async function pickLeastLoadedAgents(agents: RemoteAgent[]): Promise<RemoteAgent[]> {
+  const loads = await Promise.all(agents.map(async a => ({ agent: a, load: await getRemoteLoad(a) })));
+  return loads
+    .filter(x => x.load !== null && !x.load.busy)
+    .sort((a, b) => (a.load!.queueDepth - b.load!.queueDepth))
+    .map(x => x.agent);
 }
 
 export async function delegateToRemote(

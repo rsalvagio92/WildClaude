@@ -62,6 +62,13 @@ class MessageQueue {
     return this.chains.size;
   }
 
+  /** Total pending messages across all chats (used for fleet least-loaded routing). */
+  get totalQueued(): number {
+    let sum = 0;
+    for (const n of this.pending.values()) sum += n;
+    return sum;
+  }
+
   /** Number of pending messages for a given chat. */
   queuedFor(chatId: string): number {
     return this.pending.get(chatId) ?? 0;

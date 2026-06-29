@@ -86,6 +86,7 @@ import { registerVoiceRoutes } from './voice-routes.js';
 import { registerDevice, setDevicePrefs, getDevice, listDevices, removeDevice, isValidExpoToken } from './push/index.js';
 import { registerHermesRoutes } from './dashboard-hermes.js';
 import { getTelegramConnected, getBotInfo, chatEvents, getIsProcessing, abortActiveQuery, ChatEvent } from './state.js';
+import { messageQueue } from './message-queue.js';
 
 async function classifyTaskAgent(_prompt: string): Promise<string | null> {
   // Simple keyword-based classification (fully local, no Gemini)
@@ -1729,11 +1730,15 @@ export function startDashboard(botApi?: Api<RawApi>): void {
   // Returns busy state, active chatId, and count of in-flight remote tasks.
   app.get('/api/machine/status', (c) => {
     const { processing, chatId } = getIsProcessing();
+    // queueDepth = total pending Telegram messages + in-flight remote tasks.
+    // Fleet peers use this to pick the least-loaded machine, not just any free one.
+    const queueDepth = messageQueue.totalQueued + activeRemoteTaskCount;
     return c.json({
       agentId: AGENT_ID,
       busy: processing,
       chatId: chatId ?? null,
       activeRemoteTasks: activeRemoteTaskCount,
+      queueDepth,
     });
   });
 
