@@ -37,8 +37,8 @@ interface ServersState {
 }
 
 export const useServers = create<ServersState>((set, get) => ({
-  profiles: getJSON<ServerProfile[]>(PROFILES_KEY, []),
-  activeId: getJSON<string | null>(ACTIVE_KEY, null),
+  profiles: [],
+  activeId: null,
   info: null,
 
   active: () => {
@@ -49,13 +49,13 @@ export const useServers = create<ServersState>((set, get) => ({
   addProfile: (profile) => {
     const profiles = [...get().profiles.filter((p) => p.id !== profile.id), profile];
     const activeId = get().activeId ?? profile.id;
-    setJSON(PROFILES_KEY, profiles);
-    setJSON(ACTIVE_KEY, activeId);
+    void setJSON(PROFILES_KEY, profiles);
+    void setJSON(ACTIVE_KEY, activeId);
     set({ profiles, activeId });
   },
 
   setActive: (id) => {
-    setJSON(ACTIVE_KEY, id);
+    void setJSON(ACTIVE_KEY, id);
     // Drop stale capabilities; the active-server effect re-probes immediately.
     set({ activeId: id, info: null });
   },
@@ -64,8 +64,8 @@ export const useServers = create<ServersState>((set, get) => ({
     const wasActive = get().activeId === id;
     const profiles = get().profiles.filter((p) => p.id !== id);
     const activeId = wasActive ? (profiles[0]?.id ?? null) : get().activeId;
-    setJSON(PROFILES_KEY, profiles);
-    setJSON(ACTIVE_KEY, activeId);
+    void setJSON(PROFILES_KEY, profiles);
+    void setJSON(ACTIVE_KEY, activeId);
     set(wasActive ? { profiles, activeId, info: null } : { profiles, activeId });
   },
 

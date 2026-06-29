@@ -12,6 +12,8 @@ import { ErrorBoundary } from '@/lib/ErrorBoundary';
 import { OfflineBanner } from '@/lib/OfflineBanner';
 import { useServerPoller } from '@/lib/offline';
 import { useDeepLinks } from '@/lib/deeplinks';
+import { getJSON } from '@/lib/storage';
+import { useFeatures } from '@/store/features';
 
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
@@ -37,7 +39,23 @@ const queryClient = new QueryClient({
 function AppCore() {
   const active = useServers((s) => s.active());
   const setInfo = useServers((s) => s.setInfo);
+  const set = useServers((s) => s);
   const registeredServerId = useRef<string | null>(null);
+
+  // Phase 0: load persisted state from storage on mount
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const profiles = await getJSON<any[]>('servers.profiles', []);
+      const activeId = await getJSON<string | null>('servers.activeId', null);
+      const overrides = await getJSON<Record<string, boolean>>('features.overrides', {});
+      if (!cancelled) {
+        useServers.setState({ profiles, activeId });
+        useFeatures.setState({ overrides });
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
 
   // Phase 5: deep link pairing + server poller
   useDeepLinks();
