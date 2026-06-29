@@ -6,7 +6,7 @@
     "orientation": "portrait",
     "scheme": "wildclaude",
     "userInterfaceStyle": "dark",
-    "newArchEnabled": false,
+    "newArchEnabled": true,
     "android": {
       "package": "ai.wildclaude.app",
       "permissions": [
