@@ -8,11 +8,11 @@ import { ServerClient } from '@/api/client';
 
 interface Machine {
   machineId: string;
-  name: string;
+  primaryUrl?: string;
   status: 'online' | 'offline' | 'unknown';
-  role: string;
-  lastSeen?: number;
-  telemetry?: { cpuPercent?: number; memUsedMB?: number; memTotalMB?: number; uptimeMin?: number };
+  version?: string;
+  lastSeen?: number; // ms timestamp
+  telemetry?: { cpuPercent?: number; ramUsed?: number; ramTotal?: number; uptime?: number };
 }
 
 function StatChip({ label, value }: { label: string; value: string }) {
@@ -27,23 +27,24 @@ function StatChip({ label, value }: { label: string; value: string }) {
 function MachineCard({ machine, onCommand }: { machine: Machine; onCommand: (id: string, type: string) => void }) {
   const isOnline = machine.status === 'online';
   const t = machine.telemetry;
-  const memPct = t?.memUsedMB && t.memTotalMB ? Math.round((t.memUsedMB / t.memTotalMB) * 100) : null;
+  const memPct = t?.ramUsed && t.ramTotal ? Math.round((t.ramUsed / t.ramTotal) * 100) : null;
+  const role = machine.primaryUrl ? 'secondaria' : 'primaria';
 
   return (
     <View className="bg-surface border border-border rounded-2xl p-4 mb-3">
       <View className="flex-row items-center justify-between mb-3">
         <View className="flex-row items-center">
           <View className={`w-2.5 h-2.5 rounded-full mr-2 ${isOnline ? 'bg-green-500' : 'bg-red-400'}`} />
-          <Text className="text-white font-semibold text-base">{machine.name}</Text>
+          <Text className="text-white font-semibold text-base">{machine.machineId}</Text>
         </View>
-        <Text className="text-muted text-xs">{machine.role}</Text>
+        <Text className="text-muted text-xs">{role}</Text>
       </View>
 
       {t && (
         <View className="flex-row flex-wrap mb-3">
-          {t.cpuPercent != null && <StatChip label="CPU" value={`${t.cpuPercent}%`} />}
+          {t.cpuPercent != null && <StatChip label="CPU" value={`${Math.round(t.cpuPercent)}%`} />}
           {memPct != null && <StatChip label="RAM" value={`${memPct}%`} />}
-          {t.uptimeMin != null && <StatChip label="Up" value={`${Math.round(t.uptimeMin / 60)}h`} />}
+          {t.uptime != null && <StatChip label="Up" value={`${Math.round(t.uptime / 3600)}h`} />}
         </View>
       )}
 
@@ -63,7 +64,7 @@ function MachineCard({ machine, onCommand }: { machine: Machine; onCommand: (id:
 
       {!isOnline && machine.lastSeen && (
         <Text className="text-muted text-xs mt-1">
-          Ultimo contatto: {new Date(machine.lastSeen * 1000).toLocaleString('it')}
+          Ultimo contatto: {new Date(machine.lastSeen).toLocaleString('it')}
         </Text>
       )}
     </View>
