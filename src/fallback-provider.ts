@@ -6,18 +6,21 @@
 
 import OpenAI from 'openai';
 
-import { readEnvFile } from './env.js';
+import { getSecret } from './secrets.js';
 import { logger } from './logger.js';
 
 let _client: OpenAI | null = null;
 
-function getClient(): OpenAI | null {
+async function getClient(): Promise<OpenAI | null> {
   if (_client) return _client;
-  const secrets = readEnvFile(['OPENAI_API_KEY']);
-  const apiKey = secrets.OPENAI_API_KEY || process.env.OPENAI_API_KEY;
-  if (!apiKey) return null;
-  _client = new OpenAI({ apiKey });
-  return _client;
+  try {
+    const apiKey = await getSecret('OPENAI_API_KEY');
+    if (!apiKey) return null;
+    _client = new OpenAI({ apiKey });
+    return _client;
+  } catch {
+    return null;
+  }
 }
 
 /** Reset cached client (e.g. after secret update) */
@@ -25,10 +28,14 @@ export function resetFallbackClient(): void {
   _client = null;
 }
 
-/** True if OpenAI fallback is configured */
-export function hasFallbackProvider(): boolean {
-  const secrets = readEnvFile(['OPENAI_API_KEY']);
-  return !!(secrets.OPENAI_API_KEY || process.env.OPENAI_API_KEY);
+/** True if OpenAI fallback is configured (async check) */
+export async function hasFallbackProvider(): Promise<boolean> {
+  try {
+    const apiKey = await getSecret('OPENAI_API_KEY');
+    return !!apiKey;
+  } catch {
+    return false;
+  }
 }
 
 /** Detect Anthropic errors that warrant fallback */
@@ -59,7 +66,7 @@ export async function runOpenAIFallback(
   message: string,
   onNotify: (msg: string) => void,
 ): Promise<string | null> {
-  const client = getClient();
+  const client = await getClient();
   if (!client) return null;
 
   onNotify('⚠️ Anthropic non disponibile — fallback a OpenAI (modalità degradata, no strumenti)');

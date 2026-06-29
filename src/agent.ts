@@ -448,7 +448,7 @@ export async function runAgent(
       // If CLI failure looks like an Anthropic outage, try OpenAI immediately
       try {
         const { isProviderError, runOpenAIFallback, hasFallbackProvider } = await import('./fallback-provider.js');
-        if (isProviderError(cliErr) && hasFallbackProvider()) {
+        if (isProviderError(cliErr) && await hasFallbackProvider()) {
           const fallbackText = await runOpenAIFallback(message, (msg) => {
             if (onProgress) onProgress({ type: 'tool_active', description: msg });
           });
@@ -664,7 +664,7 @@ export async function runAgent(
     // Try OpenAI fallback if Anthropic SDK threw a provider error
     try {
       const { isProviderError, runOpenAIFallback, hasFallbackProvider } = await import('./fallback-provider.js');
-      if (isProviderError(err) && hasFallbackProvider()) {
+      if (isProviderError(err) && await hasFallbackProvider()) {
         const fallbackText = await runOpenAIFallback(message, (msg) => {
           if (onProgress) onProgress({ type: 'tool_active', description: msg });
         });
