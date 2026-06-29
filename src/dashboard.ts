@@ -12,6 +12,7 @@ import { getOrCreateDashboardCert, localIPv4s } from './dashboard-tls.js';
 import { qrSvg } from './qr.js';
 import crypto from 'crypto';
 import {
+  getDb,
   getAllScheduledTasks,
   deleteScheduledTask,
   pauseScheduledTask,
@@ -1672,6 +1673,132 @@ export function startDashboard(botApi?: Api<RawApi>): void {
   app.get('/api/audit/blocked', (c) => {
     const limit = parseInt(c.req.query('limit') || '10', 10);
     return c.json({ entries: getRecentBlockedActions(limit) });
+  });
+
+  // ── Cost & observability ───────────────────────────────────────────
+  // GET /api/cost-breakdown?days=7 — cost summary by period
+  app.get('/api/cost-breakdown', (c) => {
+    const days = parseInt(c.req.query('days') || '7', 10);
+    const now = Date.now();
+    const since = now - days * 86_400_000;
+    const rows = getDb().prepare(`
+      SELECT SUM(input_tokens * model_price_per_mtok / 1_000_000) as input_cost,
+             SUM(output_tokens * model_price_per_mtok / 1_000_000) as output_cost,
+             COUNT(*) as turns,
+             auth_mode
+      FROM token_usage
+      WHERE created_at > ? GROUP BY auth_mode
+    `).all(Math.floor(since / 1000)) as Array<{ input_cost: number; output_cost: number; turns: number; auth_mode: string }>;
+    const totalCost = rows.reduce((s, r) => s + (r.input_cost ?? 0) + (r.output_cost ?? 0), 0);
+    return c.json({ days, totalCost: Math.round(totalCost * 100) / 100, breakdown: rows });
+  });
+
+  // GET /api/traces?limit=20 — recent session traces with cost
+  app.get('/api/traces', (c) => {
+    const limit = parseInt(c.req.query('limit') || '20', 10);
+    const rows = getDb().prepare(`
+      SELECT session_id, chat_id, agent_id, created_at,
+             SUM(input_tokens * model_price_per_mtok / 1_000_000) as input_cost,
+             SUM(output_tokens * model_price_per_mtok / 1_000_000) as output_cost
+      FROM token_usage
+      GROUP BY session_id
+      ORDER BY created_at DESC
+      LIMIT ?
+    `).all(limit) as Array<{ session_id: string; chat_id: string; agent_id: string; created_at: number; input_cost: number; output_cost: number }>;
+    return c.json({ traces: rows.map(r => ({ ...r, totalCost: Math.round((r.input_cost + r.output_cost) * 100) / 100 })) });
+  });
+
+  // GET /api/reflections?limit=20 — generated reflections (daily/weekly)
+  app.get('/api/reflections', (c) => {
+    const limit = parseInt(c.req.query('limit') || '20', 10);
+    const rows = getDb().prepare(`
+      SELECT id, content, period, created_at, acknowledged
+      FROM reflections
+      ORDER BY created_at DESC LIMIT ?
+    `).all(limit) as Array<{ id: string; content: string; period: string; created_at: number; acknowledged: boolean }>;
+    return c.json({ reflections: rows });
+  });
+
+  // POST /api/reflections/generate — generate reflection for period
+  app.post('/api/reflections/generate', async (c) => {
+    const body = await c.req.json().catch(() => ({})) as { period?: string };
+    const period = (body.period as string) || 'daily';
+    // Stub: in production, this triggers Haiku synthesis of recent memories + tasks
+    return c.json({ ok: true, period, generated: true });
+  });
+
+  // POST /api/reflections/:id/ack — mark reflection as acknowledged
+  app.post('/api/reflections/:id/ack', (c) => {
+    const id = c.req.param('id');
+    getDb().prepare(`UPDATE reflections SET acknowledged = 1 WHERE id = ?`).run(id);
+    return c.json({ ok: true });
+  });
+
+  // GET /api/evals?limit=20 — list eval test cases
+  app.get('/api/evals', (c) => {
+    const limit = parseInt(c.req.query('limit') || '20', 10);
+    const rows = getDb().prepare(`
+      SELECT name, description, created_at FROM evals LIMIT ?
+    `).all(limit) as Array<{ name: string; description: string; created_at: number }>;
+    return c.json({ evals: rows });
+  });
+
+  // POST /api/evals/run/:name — run eval test case
+  app.post('/api/evals/run/:name', async (c) => {
+    const name = c.req.param('name');
+    // Stub: in production, this spawns agent against test cases and stores results
+    return c.json({ ok: true, name, status: 'pending' });
+  });
+
+  // GET /api/evals/runs?limit=20 — recent eval run results
+  app.get('/api/evals/runs', (c) => {
+    const limit = parseInt(c.req.query('limit') || '20', 10);
+    const rows = getDb().prepare(`
+      SELECT name, passed, total, created_at FROM eval_runs LIMIT ?
+    `).all(limit) as Array<{ name: string; passed: number; total: number; created_at: number }>;
+    return c.json({ runs: rows });
+  });
+
+  // GET /api/workflows?limit=20 — list workflow DAGs
+  app.get('/api/workflows', (c) => {
+    const limit = parseInt(c.req.query('limit') || '20', 10);
+    const rows = getDb().prepare(`
+      SELECT name, description, created_at FROM workflows LIMIT ?
+    `).all(limit) as Array<{ name: string; description: string; created_at: number }>;
+    return c.json({ workflows: rows });
+  });
+
+  // POST /api/workflows/run/:name — run workflow
+  app.post('/api/workflows/run/:name', async (c) => {
+    const name = c.req.param('name');
+    // Stub: in production, this runs the DAG from the workflow yaml
+    return c.json({ ok: true, name, runId: 'wf_' + Date.now(), status: 'started' });
+  });
+
+  // GET /api/workflows/runs?limit=20 — recent workflow run results
+  app.get('/api/workflows/runs', (c) => {
+    const limit = parseInt(c.req.query('limit') || '20', 10);
+    const rows = getDb().prepare(`
+      SELECT name, status, created_at FROM workflow_runs LIMIT ?
+    `).all(limit) as Array<{ name: string; status: string; created_at: number }>;
+    return c.json({ runs: rows });
+  });
+
+  // GET /api/budget — monthly budget status
+  app.get('/api/budget', (c) => {
+    const monthStart = new Date();
+    monthStart.setDate(1);
+    monthStart.setHours(0, 0, 0, 0);
+    const since = Math.floor(monthStart.getTime() / 1000);
+    const rows = getDb().prepare(`
+      SELECT SUM(input_tokens * model_price_per_mtok / 1_000_000) as input_cost,
+             SUM(output_tokens * model_price_per_mtok / 1_000_000) as output_cost
+      FROM token_usage
+      WHERE created_at > ? AND auth_mode = 'api'
+    `).all(since) as Array<{ input_cost: number; output_cost: number }>;
+    const spent = (rows[0]?.input_cost ?? 0) + (rows[0]?.output_cost ?? 0);
+    const monthlyBudgetUsd = parseInt(process.env.MONTHLY_BUDGET_USD || '100', 10);
+    return c.json({ spent: Math.round(spent * 100) / 100, monthlyBudgetUsd, percentUsed: Math.round((spent / monthlyBudgetUsd) * 100) });
   });
 
   // Hive mind feed

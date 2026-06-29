@@ -16,7 +16,8 @@ export type ServerCap =
   | 'dashboards'
   | 'memory'
   | 'agents'
-  | 'monitoring';
+  | 'monitoring'
+  | 'observability';
 
 export type FeatureGroup =
   | 'Talk'
@@ -25,6 +26,7 @@ export type FeatureGroup =
   | 'Knowledge'
   | 'Agents'
   | 'Dashboards'
+  | 'Observability'
   | 'Ecosystem'
   | 'System';
 
@@ -61,6 +63,13 @@ export const FEATURES: FeatureDef[] = [
 
   { id: 'dashboards', title: 'Dashboards',    icon: '📊', group: 'Dashboards', enabledByDefault: true,  requiresServerCap: ['dashboards'],  phase: 4 },
 
+  { id: 'traces',     title: 'Traces',        icon: '🔍', group: 'Observability', enabledByDefault: false, requiresServerCap: ['observability'], phase: 5 },
+  { id: 'reflection', title: 'Reflection',    icon: '🔮', group: 'Observability', enabledByDefault: false, requiresServerCap: ['observability'], phase: 5 },
+  { id: 'evals',      title: 'Evals',         icon: '✅', group: 'Observability', enabledByDefault: false, requiresServerCap: ['observability'], phase: 5 },
+  { id: 'workflows',  title: 'Workflows',     icon: '🔀', group: 'Observability', enabledByDefault: false, requiresServerCap: ['observability'], phase: 5 },
+  { id: 'hermes',     title: 'Hermes Lab',    icon: '⚗️', group: 'Observability', enabledByDefault: false, requiresServerCap: ['observability'], phase: 5 },
+  { id: 'files',      title: 'Files',         icon: '📁', group: 'Observability', enabledByDefault: false, requiresServerCap: ['observability'], phase: 5 },
+
   { id: 'skills',     title: 'Skills & MCP',  icon: '🧩', group: 'Ecosystem',  enabledByDefault: true,  requiresServerCap: ['agents'],      phase: 4 },
   { id: 'projects',   title: 'Progetti',      icon: '📂', group: 'Ecosystem',  enabledByDefault: false, requiresServerCap: [],              phase: 4 },
 
@@ -69,7 +78,7 @@ export const FEATURES: FeatureDef[] = [
 ];
 
 export const FEATURE_GROUP_ORDER: FeatureGroup[] = [
-  'Talk', 'Fleet', 'Monitor', 'Knowledge', 'Agents', 'Dashboards', 'Ecosystem', 'System',
+  'Talk', 'Fleet', 'Monitor', 'Knowledge', 'Agents', 'Dashboards', 'Observability', 'Ecosystem', 'System',
 ];
 
 export function getFeature(id: string): FeatureDef | undefined {
