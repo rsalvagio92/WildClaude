@@ -8,7 +8,7 @@
 
 import https from 'https';
 
-import { readEnvFile } from './env.js';
+import { getSecret } from './secrets.js';
 import { logger } from './logger.js';
 
 // Accept self-signed certs from fleet nodes (Tailscale internal — not exposed to internet)
@@ -22,10 +22,11 @@ export interface RemoteAgent {
 
 let _agents: RemoteAgent[] | null = null;
 
-function loadAgents(): RemoteAgent[] {
+async function loadAgents(): Promise<RemoteAgent[]> {
   if (_agents !== null) return _agents;
-  const secrets = readEnvFile(['REMOTE_AGENTS']);
-  const raw = secrets.REMOTE_AGENTS || process.env.REMOTE_AGENTS || '';
+  // REMOTE_AGENTS lives in the encrypted secrets store (getSecret falls back
+  // to .env / process.env automatically) — readEnvFile alone would miss it.
+  const raw = (await getSecret('REMOTE_AGENTS')) || process.env.REMOTE_AGENTS || '';
   if (!raw) {
     _agents = [];
     return _agents;
@@ -46,8 +47,8 @@ export function resetRemoteAgents(): void {
 }
 
 /** Get configured remote agents with url+token */
-export function getAvailableRemoteAgents(): RemoteAgent[] {
-  return loadAgents().filter(a => a.url && a.token && a.name);
+export async function getAvailableRemoteAgents(): Promise<RemoteAgent[]> {
+  return (await loadAgents()).filter(a => a.url && a.token && a.name);
 }
 
 export interface RemoteTaskResult {

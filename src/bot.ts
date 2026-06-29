@@ -2334,7 +2334,7 @@ export function createBot(): Bot {
       // MEDIUM/COMPLEX: try to delegate to a secondary machine before buffering
       try {
         const { getAvailableRemoteAgents, delegateToRemote, isRemoteBusy } = await import('./remote-delegate.js');
-        const allRemoteAgents = getAvailableRemoteAgents();
+        const allRemoteAgents = await getAvailableRemoteAgents();
         // Pick first non-busy machine (parallel status checks, fast 3s timeout each)
         const busyFlags = await Promise.all(allRemoteAgents.map(a => isRemoteBusy(a)));
         const remoteAgents = allRemoteAgents.filter((_, i) => !busyFlags[i]);
