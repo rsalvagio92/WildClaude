@@ -49,6 +49,10 @@ import {
   unpinMemory,
   searchMemories,
   clearSession,
+  upsertPairedDevice,
+  pingPairedDevice,
+  listPairedDevices,
+  revokePairedDevice,
 } from './db.js';
 // Gemini removed — all processing is local
 import { getSecurityStatus } from './security.js';
@@ -314,6 +318,37 @@ export function startDashboard(botApi?: Api<RawApi>): void {
   // GET /api/push/devices — list registered devices (debugging / overview).
   app.get('/api/push/devices', (c) => {
     return c.json({ devices: listDevices() });
+  });
+
+  // ── Paired devices (mobile app pairings) ────────────────────────────────
+  // POST /api/devices — register or refresh a paired device (called after QR / manual pairing).
+  app.post('/api/devices', async (c) => {
+    const body = await c.req.json().catch(() => ({})) as { deviceId?: string; name?: string; platform?: string; model?: string; appVersion?: string };
+    const { deviceId, name = '', platform, model, appVersion } = body;
+    if (!deviceId) return c.json({ error: 'deviceId required' }, 400);
+    const now = Date.now();
+    const ip = c.req.header('x-forwarded-for')?.split(',')[0].trim() ?? c.req.header('x-real-ip') ?? '';
+    upsertPairedDevice({ device_id: deviceId, name, platform: platform ?? null, model: model ?? null, app_version: appVersion ?? null, paired_at: now, last_seen_at: now, ip });
+    return c.json({ ok: true });
+  });
+
+  // POST /api/devices/:id/ping — update last_seen without re-registering.
+  app.post('/api/devices/:id/ping', (c) => {
+    const id = c.req.param('id');
+    const ip = c.req.header('x-forwarded-for')?.split(',')[0].trim() ?? c.req.header('x-real-ip') ?? '';
+    pingPairedDevice(id, ip);
+    return c.json({ ok: true });
+  });
+
+  // GET /api/devices — list paired (non-revoked) devices for the dashboard.
+  app.get('/api/devices', (c) => {
+    return c.json({ devices: listPairedDevices() });
+  });
+
+  // DELETE /api/devices/:id — revoke a paired device.
+  app.delete('/api/devices/:id', (c) => {
+    revokePairedDevice(c.req.param('id'));
+    return c.json({ ok: true });
   });
 
   // Scheduled tasks

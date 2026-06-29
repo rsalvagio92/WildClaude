@@ -1,10 +1,21 @@
 import { useState } from 'react';
-import { View, Text, TextInput, Pressable, Alert } from 'react-native';
+import { Platform, View, Text, TextInput, Pressable, Alert } from 'react-native';
 import { useRouter } from 'expo-router';
 import { CameraView, useCameraPermissions } from 'expo-camera';
+import * as Device from 'expo-device';
+import Constants from 'expo-constants';
 import { useServers } from '@/store/servers';
 import { ServerClient } from '@/api/client';
 import { parsePairing, toProfile } from '@/lib/pair';
+import { getJSON, setJSON } from '@/lib/storage';
+
+async function getDeviceId(): Promise<string> {
+  const stored = await getJSON<string | null>('device.id', null);
+  if (stored) return stored;
+  const id = 'dev_' + Math.random().toString(36).slice(2) + Date.now().toString(36);
+  await setJSON('device.id', id);
+  return id;
+}
 
 // Pair with a server: scan the QR shown in the web dashboard, or enter manually.
 export default function Pair() {
@@ -23,8 +34,19 @@ export default function Pair() {
     const profile = toProfile(profileInput);
     try {
       // Verify before saving so we don't store a dead/wrong pairing.
-      await new ServerClient(profile).info();
+      const client = new ServerClient(profile);
+      await client.info();
       addProfile(profile);
+      // Register this device on the server (best-effort, non-blocking).
+      getDeviceId().then((deviceId) => {
+        client.post('/api/devices', {
+          deviceId,
+          name: Device.deviceName || `${Platform.OS} device`,
+          platform: Platform.OS,
+          model: Device.modelName,
+          appVersion: Constants.expoConfig?.version,
+        }).catch(() => {});
+      });
       router.replace('/home');
     } catch (e: any) {
       Alert.alert('Pairing fallito', e?.message || 'Server non raggiungibile o token errato.');

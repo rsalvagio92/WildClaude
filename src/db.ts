@@ -476,6 +476,19 @@ function createSchema(database: Database.Database): void {
     );
     CREATE INDEX IF NOT EXISTS idx_push_devices_enabled ON push_devices(enabled);
 
+    -- Devices that have explicitly paired with this server (persistent, one row per install).
+    CREATE TABLE IF NOT EXISTS paired_devices (
+      device_id    TEXT PRIMARY KEY,
+      name         TEXT NOT NULL DEFAULT '',
+      platform     TEXT,
+      model        TEXT,
+      app_version  TEXT,
+      paired_at    INTEGER NOT NULL,
+      last_seen_at INTEGER NOT NULL,
+      ip           TEXT,
+      revoked      INTEGER NOT NULL DEFAULT 0
+    );
+
     CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
       summary,
       raw_text,
@@ -2641,4 +2654,48 @@ export function loadBufferedMessages(): Map<string, string[]> {
     byChat.set(row.chat_id, list);
   }
   return byChat;
+}
+
+// ── Paired devices ──────────────────────────────────────────────────────────
+
+export interface PairedDevice {
+  device_id: string;
+  name: string;
+  platform: string | null;
+  model: string | null;
+  app_version: string | null;
+  paired_at: number;
+  last_seen_at: number;
+  ip: string | null;
+}
+
+export function upsertPairedDevice(d: PairedDevice): void {
+  getDb().prepare(`
+    INSERT INTO paired_devices (device_id, name, platform, model, app_version, paired_at, last_seen_at, ip, revoked)
+    VALUES (@device_id, @name, @platform, @model, @app_version, @paired_at, @last_seen_at, @ip, 0)
+    ON CONFLICT(device_id) DO UPDATE SET
+      name         = excluded.name,
+      platform     = excluded.platform,
+      model        = excluded.model,
+      app_version  = excluded.app_version,
+      last_seen_at = excluded.last_seen_at,
+      ip           = excluded.ip,
+      revoked      = 0
+  `).run(d);
+}
+
+export function pingPairedDevice(deviceId: string, ip: string): void {
+  getDb().prepare(`UPDATE paired_devices SET last_seen_at = ?, ip = ? WHERE device_id = ? AND revoked = 0`)
+    .run(Date.now(), ip, deviceId);
+}
+
+export function listPairedDevices(): PairedDevice[] {
+  return getDb().prepare(`
+    SELECT device_id, name, platform, model, app_version, paired_at, last_seen_at, ip
+    FROM paired_devices WHERE revoked = 0 ORDER BY last_seen_at DESC
+  `).all() as PairedDevice[];
+}
+
+export function revokePairedDevice(deviceId: string): void {
+  getDb().prepare(`UPDATE paired_devices SET revoked = 1 WHERE device_id = ?`).run(deviceId);
 }

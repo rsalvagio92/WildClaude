@@ -409,6 +409,11 @@ function renderImport(container) {
 // ── Mobile pairing ───────────────────────────────────────────────────────
 function renderPairing(container) {
   let selectedUrl = null; // chosen address; null = let the server pick the best
+  const qrSection = el('div');
+  const devicesSection = el('div', { style: 'margin-top:16px' });
+  mount(container, [qrSection, devicesSection]);
+  renderPairedDevices(devicesSection);
+  container = qrSection;
   asyncView(container, async () => {
     const qs = selectedUrl ? '?url=' + encodeURIComponent(selectedUrl) : '';
     return api.get('/api/pairing' + qs);
@@ -453,6 +458,52 @@ function renderPairing(container) {
         ? el('p.muted', { style: 'margin-top:10px', text: '⚠️ Connessione HTTP in chiaro: l\'APK release la accetta solo con cleartext abilitato (già attivo in questa build). Per il microfono/voce serve HTTPS.' })
         : el('p.muted', { style: 'margin-top:10px', text: 'ℹ️ HTTPS self-signed: l\'app potrebbe rifiutare il certificato finché il cert pinning non è attivo. Usa un cert valido (Tailscale/reverse proxy) se la connessione fallisce.' }),
     ], el('button.icon-btn', { text: '⟳', onclick: rerun }));
+  });
+}
+
+// ── Paired devices list ───────────────────────────────────────────────────
+function renderPairedDevices(container) {
+  asyncView(container, () => api.get('/api/devices'), (data, rerun) => {
+    const devices = data?.devices ?? [];
+    const platformIcon = (p) => p === 'ios' ? '🍎' : p === 'android' ? '🤖' : '📱';
+    const relTime = (ms) => {
+      const diff = Date.now() - ms;
+      if (diff < 60_000) return 'adesso';
+      if (diff < 3_600_000) return Math.round(diff / 60_000) + 'm fa';
+      if (diff < 86_400_000) return Math.round(diff / 3_600_000) + 'h fa';
+      return Math.round(diff / 86_400_000) + 'g fa';
+    };
+
+    const rows = devices.map((d) => el('div', {
+      style: 'display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid var(--border)',
+    }, [
+      el('span', { text: platformIcon(d.platform), style: 'font-size:1.4em' }),
+      el('div', { style: 'flex:1;min-width:0' }, [
+        el('div', { text: d.name || d.device_id, style: 'color:var(--text);font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis' }),
+        el('div', { text: [d.model, d.app_version ? 'v' + d.app_version : null].filter(Boolean).join(' · ') || d.device_id, style: 'color:var(--muted);font-size:.8em' }),
+      ]),
+      el('div', { style: 'text-align:right;flex-shrink:0' }, [
+        el('div', { text: relTime(d.last_seen_at), style: 'color:var(--muted);font-size:.8em' }),
+        el('div', { text: 'paired ' + new Date(d.paired_at).toLocaleDateString('it'), style: 'color:var(--muted);font-size:.75em' }),
+      ]),
+      el('button.btn.btn-sm', {
+        text: 'Revoca',
+        style: 'color:var(--danger,#f87171)',
+        onclick: async () => {
+          const ok = await confirmDialog(`Revocare il dispositivo "${d.name || d.device_id}"?`);
+          if (!ok) return;
+          await api.del(`/api/devices/${encodeURIComponent(d.device_id)}`);
+          toastOk('Dispositivo revocato');
+          rerun();
+        },
+      }),
+    ]));
+
+    return card('📋 Dispositivi accoppiati', rows.length
+      ? rows
+      : [el('p.muted', { text: 'Nessun dispositivo ancora accoppiato.' })],
+      el('button.icon-btn', { text: '⟳', onclick: rerun }),
+    );
   });
 }
 
