@@ -97,6 +97,9 @@ async function classifyTaskAgent(_prompt: string): Promise<string | null> {
   }
 }
 
+// Track in-flight remote tasks (for /api/machine/status + busy-gate in /api/remote-task)
+let activeRemoteTaskCount = 0;
+
 export function startDashboard(botApi?: Api<RawApi>): void {
   if (!DASHBOARD_TOKEN) {
     logger.info('DASHBOARD_TOKEN not set, dashboard disabled');
@@ -1722,6 +1725,18 @@ export function startDashboard(botApi?: Api<RawApi>): void {
     return c.json({ ok: aborted });
   });
 
+  // Machine status — used by fleet peers to check load before delegating a task.
+  // Returns busy state, active chatId, and count of in-flight remote tasks.
+  app.get('/api/machine/status', (c) => {
+    const { processing, chatId } = getIsProcessing();
+    return c.json({
+      agentId: AGENT_ID,
+      busy: processing,
+      chatId: chatId ?? null,
+      activeRemoteTasks: activeRemoteTaskCount,
+    });
+  });
+
   // POST /api/voice/tts — converts text to MP3 via ElevenLabs (for Dashboard Voice Chat)
   app.post('/api/voice/tts', async (c) => {
     const body = await c.req.json<{ text?: string }>().catch(() => ({ text: undefined }));
@@ -2075,9 +2090,15 @@ export function startDashboard(botApi?: Api<RawApi>): void {
   registerProjectRoutes(app);
 
   // ── Remote task endpoint — receive delegated tasks from fleet nodes ──
+  // Max 1 concurrent remote task per machine — secondary nodes are not for parallel heavy lifting.
+  const MAX_REMOTE_TASKS = 1;
   app.post('/api/remote-task', async (c) => {
     const body = await c.req.json<{ message?: string; model?: string }>().catch(() => null);
     if (!body?.message) return c.json({ error: 'message required' }, 400);
+    if (activeRemoteTaskCount >= MAX_REMOTE_TASKS) {
+      return c.json({ error: 'busy', activeRemoteTasks: activeRemoteTaskCount }, 503);
+    }
+    activeRemoteTaskCount++;
     try {
       const { runAgent } = await import('./agent.js');
       const result = await runAgent(body.message, undefined, () => {}, undefined, body.model);
@@ -2085,6 +2106,8 @@ export function startDashboard(botApi?: Api<RawApi>): void {
     } catch (err) {
       logger.error({ err }, 'Remote task failed');
       return c.json({ error: String(err) }, 500);
+    } finally {
+      activeRemoteTaskCount--;
     }
   });
 

@@ -60,6 +60,27 @@ export interface RemoteTaskResult {
  * The remote node runs runAgent() and returns the result.
  * Times out after timeoutMs (default 5 min).
  */
+/**
+ * Quick status check — returns true if the remote machine is currently busy
+ * (processing a Telegram message OR already handling a remote task).
+ * Times out in 3s so it never stalls the caller.
+ */
+export async function isRemoteBusy(agent: RemoteAgent): Promise<boolean> {
+  try {
+    const fetchOpts: RequestInit & { agent?: unknown } = {
+      headers: { 'Authorization': `Bearer ${agent.token}` },
+      signal: AbortSignal.timeout(3000),
+    };
+    if (agent.url.startsWith('https://')) fetchOpts.agent = INSECURE_AGENT;
+    const resp = await fetch(`${agent.url}/api/machine/status`, fetchOpts);
+    if (!resp.ok) return false; // assume available if status endpoint missing
+    const data = await resp.json() as { busy?: boolean; activeRemoteTasks?: number };
+    return !!(data.busy || (data.activeRemoteTasks ?? 0) > 0);
+  } catch {
+    return false; // timeout or unreachable — delegateToRemote will discover that
+  }
+}
+
 export async function delegateToRemote(
   agent: RemoteAgent,
   message: string,
