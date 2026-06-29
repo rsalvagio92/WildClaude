@@ -14,7 +14,10 @@ async function request(method: string, path: string, body?: unknown): Promise<an
   }
 
   const config = loadRoleConfig();
-  const url = `http://${config.primaryUrl}${path}`;
+  // Auto-detect https (port 3141 or explicit flag). Default to https for security.
+  const isHttps = config.primaryUrl?.includes(':3141') || config.primaryUrl?.includes(':443') || process.env.WILD_PRIMARY_HTTPS !== 'false';
+  const scheme = isHttps ? 'https' : 'http';
+  const url = `${scheme}://${config.primaryUrl}${path}`;
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
   };
