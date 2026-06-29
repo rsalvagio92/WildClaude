@@ -2098,7 +2098,11 @@ export function startDashboard(botApi?: Api<RawApi>): void {
   // Max 1 concurrent remote task per machine — secondary nodes are not for parallel heavy lifting.
   const MAX_REMOTE_TASKS = 1;
   app.post('/api/remote-task', async (c) => {
-    const body = await c.req.json<{ message?: string; model?: string }>().catch(() => null);
+    const body = await c.req.json<{
+      message?: string;
+      model?: string;
+      sessionContext?: Array<{ role: 'user' | 'assistant'; content: string }>;
+    }>().catch(() => null);
     if (!body?.message) return c.json({ error: 'message required' }, 400);
     if (activeRemoteTaskCount >= MAX_REMOTE_TASKS) {
       return c.json({ error: 'busy', activeRemoteTasks: activeRemoteTaskCount }, 503);
@@ -2106,7 +2110,15 @@ export function startDashboard(botApi?: Api<RawApi>): void {
     activeRemoteTaskCount++;
     try {
       const { runAgent } = await import('./agent.js');
-      const result = await runAgent(body.message, undefined, () => {}, undefined, body.model);
+      // Prepend session context from primary so the secondary has conversational continuity
+      let prompt = body.message;
+      if (body.sessionContext && body.sessionContext.length > 0) {
+        const ctxBlock = body.sessionContext
+          .map(t => `${t.role === 'user' ? 'User' : 'Assistant'}: ${t.content}`)
+          .join('\n');
+        prompt = `[Context from ongoing session on primary machine]\n${ctxBlock}\n\n[Task]\n${body.message}`;
+      }
+      const result = await runAgent(prompt, undefined, () => {}, undefined, body.model);
       return c.json({ text: result.text, agentId: AGENT_ID });
     } catch (err) {
       logger.error({ err }, 'Remote task failed');

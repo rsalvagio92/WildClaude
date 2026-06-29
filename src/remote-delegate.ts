@@ -166,11 +166,17 @@ export async function pickLeastLoadedAgents(agents: RemoteAgent[]): Promise<Remo
     .map(x => x.agent);
 }
 
+export interface SessionTurn {
+  role: 'user' | 'assistant';
+  content: string;
+}
+
 export async function delegateToRemote(
   agent: RemoteAgent,
   message: string,
   model?: string,
   timeoutMs = 300_000,
+  sessionContext?: SessionTurn[],
 ): Promise<RemoteTaskResult | null> {
   try {
     const resp = await requestJson(`${agent.url}/api/remote-task`, {
@@ -179,7 +185,7 @@ export async function delegateToRemote(
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${agent.token}`,
       },
-      body: JSON.stringify({ message, model }),
+      body: JSON.stringify({ message, model, sessionContext }),
       timeoutMs,
     });
 

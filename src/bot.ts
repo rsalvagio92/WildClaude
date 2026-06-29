@@ -2345,7 +2345,17 @@ export function createBot(): Bot {
             { parse_mode: 'HTML' },
           ).catch(() => null);
           void (async () => {
-            const result = await delegateToRemote(remoteAgent, text);
+            // Pass last 6 conversation turns so the secondary has live session context
+          let sessionContext: Array<{ role: 'user' | 'assistant'; content: string }> | undefined;
+          try {
+            const { getSession, getSessionConversation } = await import('./db.js');
+            const sessionId = getSession(chatIdStr, AGENT_ID);
+            if (sessionId) {
+              const turns = getSessionConversation(sessionId, 6);
+              sessionContext = turns.map(t => ({ role: t.role as 'user' | 'assistant', content: t.content.slice(0, 800) }));
+            }
+          } catch { /* non-critical */ }
+          const result = await delegateToRemote(remoteAgent, text, undefined, 300_000, sessionContext);
             if (ackMsg) {
               await ctx.api.deleteMessage(chatIdStr, ackMsg.message_id).catch(() => {});
             }
