@@ -7,12 +7,61 @@
  */
 
 import https from 'https';
+import http from 'http';
 
 import { getSecret } from './secrets.js';
 import { logger } from './logger.js';
 
 // Accept self-signed certs from fleet nodes (Tailscale internal — not exposed to internet)
 const INSECURE_AGENT = new https.Agent({ rejectUnauthorized: false });
+
+interface JsonResponse {
+  ok: boolean;
+  status: number;
+  json(): unknown;
+}
+
+/**
+ * Minimal JSON request helper using the native http/https modules.
+ *
+ * We cannot use global fetch() here: Node's fetch (undici) ignores the
+ * `agent` option, so it rejects the self-signed certs our HTTPS fleet nodes
+ * (e.g. WB3) serve. The native https module honors a custom agent, so this is
+ * the only reliable way to talk to a self-signed peer without extra deps.
+ */
+function requestJson(
+  url: string,
+  opts: { method?: string; headers?: Record<string, string>; body?: string; timeoutMs: number },
+): Promise<JsonResponse> {
+  return new Promise((resolve, reject) => {
+    const isHttps = url.startsWith('https://');
+    const lib = isHttps ? https : http;
+    const reqOpts: https.RequestOptions = {
+      method: opts.method ?? 'GET',
+      headers: opts.headers ?? {},
+      timeout: opts.timeoutMs,
+    };
+    if (isHttps) reqOpts.agent = INSECURE_AGENT;
+
+    const req = lib.request(url, reqOpts, res => {
+      const chunks: Buffer[] = [];
+      res.on('data', c => chunks.push(c as Buffer));
+      res.on('end', () => {
+        const text = Buffer.concat(chunks).toString('utf8');
+        const status = res.statusCode ?? 0;
+        resolve({
+          ok: status >= 200 && status < 300,
+          status,
+          json: () => (text ? JSON.parse(text) : null),
+        });
+      });
+    });
+    req.on('error', reject);
+    req.on('timeout', () => req.destroy(new Error('timeout')));
+    if (opts.body) req.write(opts.body);
+    req.end();
+  });
+}
 
 export interface RemoteAgent {
   name: string;
@@ -87,17 +136,15 @@ export interface RemoteLoad {
  */
 export async function getRemoteLoad(agent: RemoteAgent): Promise<RemoteLoad | null> {
   try {
-    const fetchOpts: RequestInit & { agent?: unknown } = {
+    const resp = await requestJson(`${agent.url}/api/machine/status`, {
       headers: { 'Authorization': `Bearer ${agent.token}` },
-      signal: AbortSignal.timeout(3000),
-    };
-    if (agent.url.startsWith('https://')) fetchOpts.agent = INSECURE_AGENT;
-    const resp = await fetch(`${agent.url}/api/machine/status`, fetchOpts);
+      timeoutMs: 3000,
+    });
     if (!resp.ok) {
       // Old code without the status endpoint — assume reachable & idle.
       return { busy: false, queueDepth: 0, reachable: true };
     }
-    const data = await resp.json() as { busy?: boolean; activeRemoteTasks?: number; queueDepth?: number };
+    const data = resp.json() as { busy?: boolean; activeRemoteTasks?: number; queueDepth?: number };
     const busy = !!data.busy;
     // queueDepth from new peers; fall back to activeRemoteTasks (+busy) for older ones.
     const queueDepth = data.queueDepth ?? ((data.activeRemoteTasks ?? 0) + (busy ? 1 : 0));
@@ -125,39 +172,29 @@ export async function delegateToRemote(
   model?: string,
   timeoutMs = 300_000,
 ): Promise<RemoteTaskResult | null> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-
   try {
-    const fetchOpts: RequestInit & { agent?: unknown } = {
+    const resp = await requestJson(`${agent.url}/api/remote-task`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${agent.token}`,
       },
       body: JSON.stringify({ message, model }),
-      signal: controller.signal,
-    };
-    // Accept self-signed certs for HTTPS fleet nodes (Tailscale internal)
-    if (agent.url.startsWith('https://')) {
-      fetchOpts.agent = INSECURE_AGENT;
-    }
-    const resp = await fetch(`${agent.url}/api/remote-task`, fetchOpts);
-    clearTimeout(timer);
+      timeoutMs,
+    });
 
     if (!resp.ok) {
       logger.warn({ status: resp.status, agent: agent.name }, 'Remote agent HTTP error');
       return null;
     }
 
-    const data = await resp.json() as { text?: string; error?: string };
+    const data = resp.json() as { text?: string; error?: string };
     if (!data.text) return null;
 
     return { text: data.text, agentName: agent.name };
   } catch (err) {
-    clearTimeout(timer);
     const msg = err instanceof Error ? err.message : String(err);
-    if (msg.includes('aborted') || msg.includes('AbortError')) {
+    if (msg.includes('timeout') || msg.includes('aborted') || msg.includes('AbortError')) {
       logger.warn({ agent: agent.name, timeoutMs }, 'Remote agent timed out');
     } else {
       logger.warn({ err: msg, agent: agent.name }, 'Remote agent delegation failed');
