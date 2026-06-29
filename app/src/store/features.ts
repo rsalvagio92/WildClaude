@@ -24,7 +24,7 @@ interface FeaturesState {
 }
 
 export const useFeatures = create<FeaturesState>((set, get) => ({
-  overrides: getJSON<Record<string, boolean>>(OVERRIDES_KEY, {}),
+  overrides: {},
 
   isEnabled: (featureId) => {
     const { overrides } = get();
@@ -39,12 +39,12 @@ export const useFeatures = create<FeaturesState>((set, get) => ({
 
   setEnabled: (featureId, enabled) => {
     const overrides = { ...get().overrides, [featureId]: enabled };
-    setJSON(OVERRIDES_KEY, overrides);
+    void setJSON(OVERRIDES_KEY, overrides);
     set({ overrides });
   },
 
   reset: () => {
-    setJSON(OVERRIDES_KEY, {});
+    void setJSON(OVERRIDES_KEY, {});
     set({ overrides: {} });
   },
 }));
