@@ -182,7 +182,7 @@ import { registerMemoryBlockCommands } from './memory-blocks.js';
 import { registerEvalCommands } from './evals.js';
 import { registerWorkflowCommands } from './workflows.js';
 import { registerDebateCommand } from './debate.js';
-import { registerReflectionCommands } from './reflection.js';
+import { registerReflectionCommands, buildPatternContext } from './reflection.js';
 import { registerDigestCommand } from './digest.js';
 import { registerMoodCommand } from './moods.js';
 import { registerSyncCommand } from './sync/litestream.js';
@@ -648,6 +648,10 @@ export async function handleMessage(ctx: Context, message: string, forceVoiceRep
   // Inject self-reflection lessons so the bot avoids past mistakes
   const reflectionCtx = buildReflectionContext();
   if (reflectionCtx) parts.push(reflectionCtx);
+
+  // Inject weekly/daily reflection patterns so behavior improves over time
+  const patternCtx = buildPatternContext();
+  if (patternCtx) parts.push(patternCtx);
 
   // Inject buffered messages (sent while previous task was running)
   const bufferedMsgs = messageQueue.flushBuffer(chatIdStr);

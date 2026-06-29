@@ -66,7 +66,7 @@ Override user data location with env var: `WILD_DATA_DIR=/custom/path`
 ├── memories/                   # Markdown memory files (YYYY-MM/YYYY-MM-DD-topic.md)
 ├── agents/                     # User-created agents (override project defaults by ID)
 ├── skills/                     # User-created skills (override project defaults by name)
-├── store/                      # SQLite databases (wild-claude.db)
+├── store/                      # SQLite databases (claudeclaw.db — primary active DB)
 ├── secrets.enc.json            # AES-256-GCM encrypted secrets store
 ├── evolution.log.json          # Self-evolution log
 ├── personalities/              # User-defined personality presets (JSON)
