@@ -89,6 +89,63 @@ async function handleInternalSentinel(prompt: string, send: Sender): Promise<voi
     try { await runWikiCuration(send); } catch (err) { logger.warn({ err }, 'wiki curation failed'); }
     return;
   }
+  if (prompt === '__internal:nightly:run') {
+    // Nightly consolidation (primary only). Orchestrates the whole evening pass:
+    // 1. Reflection over today's cross-machine session (memory-sync push-based,
+    //    so the primary already holds secondaries' memories synced during the day).
+    // 2. Persist the key moments as a pinned HIGH-importance memory file,
+    //    organised by topic, so they survive into future sessions.
+    // 3. Self-learning (backup + non-destructive learning over user data).
+    // 4. Code self-improvement → proposes architectural/code improvements as a
+    //    human-in-the-loop plan (gated by SELF_IMPROVE_CODE_ENABLED).
+    await send('🌙 <b>Consolidamento serale</b> — avvio passaggio notturno.');
+
+    // Phase 1 — reflection (surfaces patterns from conversation_log + tools + memories)
+    let reflection: { summary: string; patterns: string[] } | null = null;
+    try {
+      const { generateReflection } = await import('./reflection.js');
+      reflection = await generateReflection('day');
+    } catch (err) {
+      logger.warn({ err }, 'nightly: reflection failed');
+    }
+
+    // Phase 2 — persist key moments as a durable, organised memory
+    if (reflection) {
+      try {
+        const { writeMemoryToFile } = await import('./memory-files.js');
+        const topics = ['daily-consolidation', ...reflection.patterns.slice(0, 3).map((_, i) => `pattern-${i + 1}`)];
+        const body = [
+          reflection.summary,
+          reflection.patterns.length ? '\nMomenti chiave:\n' + reflection.patterns.map((p, i) => `${i + 1}. ${p}`).join('\n') : '',
+        ].join('\n');
+        writeMemoryToFile(body, topics, 0.85, 'nightly-consolidation');
+        await send(`📝 Momenti chiave salvati in memoria (${reflection.patterns.length} pattern).`);
+      } catch (err) {
+        logger.warn({ err }, 'nightly: memory persist failed');
+      }
+    } else {
+      await send('📝 Nessuna attività rilevante oggi da consolidare.');
+    }
+
+    // Phase 3 — self-learning + backup (user data only, non-destructive)
+    try {
+      const { runSelfLearning } = await import('./self-learning.js');
+      await runSelfLearning(send);
+    } catch (err) {
+      logger.warn({ err }, 'nightly: self-learning failed');
+    }
+
+    // Phase 4 — code self-improvement → proposed plan (gated, human-in-the-loop)
+    try {
+      const { runCodeImprovement } = await import('./self-improvement.js');
+      await runCodeImprovement(send);
+    } catch (err) {
+      logger.warn({ err }, 'nightly: code self-improvement failed');
+    }
+
+    await send('🌙 Consolidamento serale completato.');
+    return;
+  }
   logger.warn({ prompt }, 'unknown internal sentinel');
 }
 

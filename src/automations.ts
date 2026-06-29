@@ -123,6 +123,16 @@ export const DEFAULT_AUTOMATIONS: AutomationDef[] = [
     cron: '0 5 * * *',
     description: 'Distilla articoli wiki (bozze) dai temi ricorrenti nelle memorie importanti, alle 05:00',
   },
+  // ── Nightly consolidation (primary only) — single orchestrated evening pass ──
+  {
+    id: 'auto-nightly-consolidate',
+    name: 'Nightly consolidation (reflection + memory + self-learn + code plan)',
+    prompt: '__internal:nightly:run',
+    cron: '0 22 * * *',
+    description:
+      'Consolidamento serale alle 22: reflection cross-machine, salva momenti chiave in memoria, ' +
+      'self-learning + backup, e propone migliorie codice/architettura (human-in-the-loop).',
+  },
 ];
 
 /**
@@ -156,7 +166,7 @@ export function syncAutomations(agentId = 'main'): void {
   // --- Default automations ---
   for (const def of DEFAULT_AUTOMATIONS) {
     // Skip memory-processing automations on secondary (no dups)
-    const isPrimaryOnly = ['__internal:reflection', '__internal:digest', '__internal:wiki_curate'].some(id => def.id.includes(id));
+    const isPrimaryOnly = ['auto-reflect', 'auto-digest', 'auto-wiki-curate', 'auto-nightly-consolidate'].some(id => def.id.includes(id));
     if (isPrimaryOnly && !isPrimary()) {
       logger.debug({ id: def.id }, 'Automation skipped on secondary (primary-only)');
       if (existingById.has(def.id)) {
