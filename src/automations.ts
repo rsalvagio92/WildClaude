@@ -103,11 +103,18 @@ export const DEFAULT_AUTOMATIONS: AutomationDef[] = [
   },
   // ── Nightly self-improvement ──
   {
+    id: 'auto-kernel-sync',
+    name: 'Kernel auto-sync (nightly)',
+    prompt: '__internal:kernel_sync:run',
+    cron: '0 3 * * *',
+    description: 'Riconcilia life kernel (me/goals/learning/finance) dalle memorie recenti alle 03:00',
+  },
+  {
     id: 'auto-self-learn',
     name: 'Nightly self-learning + backup',
     prompt: '__internal:self_learn:run',
-    cron: '0 3 * * *',
-    description: 'Backup giornaliero + apprendimento non distruttivo (solo dati utente) alle 03:00',
+    cron: '15 3 * * *',
+    description: 'Backup giornaliero + apprendimento non distruttivo (solo dati utente) alle 03:15',
   },
   {
     id: 'auto-self-improve-code',

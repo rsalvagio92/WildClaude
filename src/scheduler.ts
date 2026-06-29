@@ -89,6 +89,12 @@ async function handleInternalSentinel(prompt: string, send: Sender): Promise<voi
     try { await runWikiCuration(send); } catch (err) { logger.warn({ err }, 'wiki curation failed'); }
     return;
   }
+  if (prompt === '__internal:kernel_sync:run') {
+    // Reconcile life kernel files (me/goals/learning/finance) from recent activity.
+    const { runKernelAutoSync } = await import('./kernel-auto-sync.js');
+    try { await runKernelAutoSync(); } catch (err) { logger.warn({ err }, 'kernel auto-sync failed'); }
+    return;
+  }
   logger.warn({ prompt }, 'unknown internal sentinel');
 }
 
