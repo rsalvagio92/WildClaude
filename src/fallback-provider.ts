@@ -57,7 +57,8 @@ export function isProviderError(err: unknown): boolean {
 }
 
 /**
- * Run message through OpenAI gpt-4o as a chat-only fallback.
+ * Run message through OpenAI gpt-4.1-mini as a chat-only fallback.
+ * Cost-optimized (6x cheaper than gpt-4o), 1M context, sufficient for emergency use.
  * Returns the response text or null if OpenAI is also unavailable.
  * @param onNotify - called immediately before the OpenAI call so the user
  *   sees a warning before we wait.
@@ -74,7 +75,7 @@ export async function runOpenAIFallback(
 
   try {
     const response = await client.chat.completions.create({
-      model: 'gpt-4o',
+      model: 'gpt-4.1-mini',
       max_tokens: 4096,
       messages: [{ role: 'user', content: message }],
     });
