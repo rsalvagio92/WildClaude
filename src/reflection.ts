@@ -218,6 +218,28 @@ export function acknowledgeReflection(id: number): boolean {
   return info.changes > 0;
 }
 
+/**
+ * Build a context block with the most recent reflection patterns for injection
+ * into the system prompt. Returns empty string if no recent patterns exist.
+ */
+export function buildPatternContext(limit = 3): string {
+  const rows = getDb().prepare(
+    `SELECT period, summary, patterns FROM reflections ORDER BY created_at DESC LIMIT ?`,
+  ).all(limit) as Pick<ReflectionRow, 'period' | 'summary' | 'patterns'>[];
+  if (rows.length === 0) return '';
+
+  const lines: string[] = [];
+  for (const row of rows) {
+    let patterns: string[] = [];
+    try { patterns = JSON.parse(row.patterns) as string[]; } catch { /* ignore */ }
+    if (patterns.length > 0) {
+      lines.push(...patterns.map((p) => `- [${row.period}] ${p}`));
+    }
+  }
+  if (lines.length === 0) return '';
+  return `[Observed behavioral patterns — use these to improve your approach]\n${lines.join('\n')}\n[End patterns]`;
+}
+
 // ── Telegram ─────────────────────────────────────────────────────────
 
 export function registerReflectionCommands(
