@@ -9,4 +9,4 @@ config.resolver.alias = {
   '@': path.resolve(__dirname, 'src'),
 };
 
-module.exports = withNativeWind(config);
+module.exports = withNativeWind(config, { input: './global.css' });
