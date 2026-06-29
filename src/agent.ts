@@ -442,8 +442,19 @@ export async function runAgent(
   if (!secrets.ANTHROPIC_API_KEY && !process.env.ANTHROPIC_API_KEY) {
     try {
       return await runAgentDirect(message, sessionId, onTyping, onProgress, model, abortController, onStreamText, appendSystemPrompt, cwdOverride);
-    } catch (err) {
-      logger.warn({ err: err instanceof Error ? err.message : String(err) }, 'Direct CLI failed, falling back to SDK');
+    } catch (cliErr) {
+      const cliMsg = cliErr instanceof Error ? cliErr.message : String(cliErr);
+      logger.warn({ err: cliMsg }, 'Direct CLI failed, falling back to SDK');
+      // If CLI failure looks like an Anthropic outage, try OpenAI immediately
+      try {
+        const { isProviderError, runOpenAIFallback, hasFallbackProvider } = await import('./fallback-provider.js');
+        if (isProviderError(cliErr) && hasFallbackProvider()) {
+          const fallbackText = await runOpenAIFallback(message, (msg) => {
+            if (onProgress) onProgress({ type: 'tool_active', description: msg });
+          });
+          if (fallbackText) return { text: fallbackText, newSessionId: sessionId, usage: null };
+        }
+      } catch { /* fallback module unavailable, continue to SDK */ }
     }
   }
 
@@ -650,6 +661,16 @@ export async function runAgent(
       logger.info('Agent query aborted by user');
       return { text: null, newSessionId, usage, aborted: true };
     }
+    // Try OpenAI fallback if Anthropic SDK threw a provider error
+    try {
+      const { isProviderError, runOpenAIFallback, hasFallbackProvider } = await import('./fallback-provider.js');
+      if (isProviderError(err) && hasFallbackProvider()) {
+        const fallbackText = await runOpenAIFallback(message, (msg) => {
+          if (onProgress) onProgress({ type: 'tool_active', description: msg });
+        });
+        if (fallbackText) return { text: fallbackText, newSessionId, usage: null };
+      }
+    } catch { /* fallback unavailable */ }
     throw err;
   } finally {
     clearInterval(typingInterval);

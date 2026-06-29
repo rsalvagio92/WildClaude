@@ -2331,6 +2331,41 @@ export function createBot(): Bot {
         }
       }
 
+      // MEDIUM/COMPLEX: try to delegate to a secondary machine before buffering
+      try {
+        const { getAvailableRemoteAgents, delegateToRemote } = await import('./remote-delegate.js');
+        const remoteAgents = getAvailableRemoteAgents();
+        if (remoteAgents.length > 0) {
+          const remoteAgent = remoteAgents[Math.floor(Math.random() * remoteAgents.length)];
+          const ackMsg = await ctx.reply(
+            `↗ <i>Queue piena — delegando a ${remoteAgent.name}…</i>`,
+            { parse_mode: 'HTML' },
+          ).catch(() => null);
+          void (async () => {
+            const result = await delegateToRemote(remoteAgent, text);
+            if (ackMsg) {
+              await ctx.api.deleteMessage(chatIdStr, ackMsg.message_id).catch(() => {});
+            }
+            if (result) {
+              const header = `<i>↗ via ${result.agentName}</i>\n\n`;
+              for (const part of splitMessage(header + formatForTelegram(result.text))) {
+                await ctx.reply(part, { parse_mode: 'HTML' }).catch(() => {});
+              }
+            } else {
+              // Remote unavailable — fall back to buffer
+              messageQueue.bufferMessage(chatIdStr, text);
+              await ctx.reply(
+                `⚠️ <i>${remoteAgent.name} non raggiungibile — messaggio messo in coda locale.</i>`,
+                { parse_mode: 'HTML' },
+              ).catch(() => {});
+            }
+          })();
+          return;
+        }
+      } catch (err) {
+        logger.warn({ err }, 'Remote delegate import failed');
+      }
+
       // Buffer the message for context injection after current task
       messageQueue.bufferMessage(chatIdStr, text);
       // Visible ack: reaction + short text message with the buffer count.

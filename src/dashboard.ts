@@ -2074,6 +2074,20 @@ export function startDashboard(botApi?: Api<RawApi>): void {
   // ── Project containers (metadata, KB, agent reference, active-project) ──
   registerProjectRoutes(app);
 
+  // ── Remote task endpoint — receive delegated tasks from fleet nodes ──
+  app.post('/api/remote-task', async (c) => {
+    const body = await c.req.json<{ message?: string; model?: string }>().catch(() => null);
+    if (!body?.message) return c.json({ error: 'message required' }, 400);
+    try {
+      const { runAgent } = await import('./agent.js');
+      const result = await runAgent(body.message, undefined, () => {}, undefined, body.model);
+      return c.json({ text: result.text, agentId: AGENT_ID });
+    } catch (err) {
+      logger.error({ err }, 'Remote task failed');
+      return c.json({ error: String(err) }, 500);
+    }
+  });
+
   // HTTPS (self-signed) when requested — needed for browser mic / voice over LAN.
   if (DASHBOARD_HTTPS) {
     const tls = getOrCreateDashboardCert(DASHBOARD_HOST);

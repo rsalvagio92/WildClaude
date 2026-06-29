@@ -26,6 +26,8 @@ const envConfig = readEnvFile([
   'DASHBOARD_HOST',
   'DASHBOARD_HTTPS',
   'AGENT_AUTO_SUGGEST',
+  'OPENAI_API_KEY',
+  'REMOTE_AGENTS',
 ]);
 
 // ── Multi-agent support ──────────────────────────────────────────────
