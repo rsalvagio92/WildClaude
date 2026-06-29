@@ -45,13 +45,14 @@ export default function WikiScreen() {
 
   const { data, isLoading, error, refetch } = useQuery({
     queryKey: ['wiki', active?.id],
-    queryFn: () => new ServerClient(active!).get<WikiArticle[]>('/api/wiki'),
+    // The API wraps the list as { articles: [...] }, not a bare array.
+    queryFn: () => new ServerClient(active!).get<{ articles: WikiArticle[] }>('/api/wiki'),
     enabled: !!active,
   });
 
   const onRefresh = async () => { setRefreshing(true); await refetch(); setRefreshing(false); };
 
-  const articles = Array.isArray(data) ? data : [];
+  const articles = Array.isArray(data?.articles) ? data.articles : Array.isArray(data) ? (data as WikiArticle[]) : [];
 
   return (
     <View className="flex-1 bg-bg" style={{ paddingTop: insets.top }}>
