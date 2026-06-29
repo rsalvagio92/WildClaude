@@ -170,7 +170,17 @@ async function runAgentDirect(
             onProgress({ type: 'task_started', description: event.description ?? 'Sub-agent started' });
           }
           if (event.type === 'system' && event.subtype === 'task_notification' && onProgress) {
-            onProgress({ type: 'task_completed', description: event.summary ?? 'Sub-agent finished' });
+            const summary = event.summary ?? '';
+            // Skip harness-internal noise: Monitor teardown / background-shell
+            // completion records that Claude Code emits when a session ends.
+            // These are not sub-agent completions and should not reach Telegram.
+            const isHarnessNoise = summary.startsWith('No completion record was found') ||
+              summary.includes('background shell command') ||
+              summary.includes('Monitor timeout') ||
+              summary.includes('agent teardown');
+            if (!isHarnessNoise) {
+              onProgress({ type: 'task_completed', description: summary || 'Sub-agent finished' });
+            }
           }
 
           // Final result
