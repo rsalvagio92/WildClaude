@@ -6,8 +6,13 @@
  *   [{"name":"WB2","url":"http://100.89.238.16:3141","token":"<dashboard-token>"}]
  */
 
+import https from 'https';
+
 import { readEnvFile } from './env.js';
 import { logger } from './logger.js';
+
+// Accept self-signed certs from fleet nodes (Tailscale internal — not exposed to internet)
+const INSECURE_AGENT = new https.Agent({ rejectUnauthorized: false });
 
 export interface RemoteAgent {
   name: string;
@@ -65,7 +70,7 @@ export async function delegateToRemote(
   const timer = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
-    const resp = await fetch(`${agent.url}/api/remote-task`, {
+    const fetchOpts: RequestInit & { agent?: unknown } = {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -73,7 +78,12 @@ export async function delegateToRemote(
       },
       body: JSON.stringify({ message, model }),
       signal: controller.signal,
-    });
+    };
+    // Accept self-signed certs for HTTPS fleet nodes (Tailscale internal)
+    if (agent.url.startsWith('https://')) {
+      fetchOpts.agent = INSECURE_AGENT;
+    }
+    const resp = await fetch(`${agent.url}/api/remote-task`, fetchOpts);
     clearTimeout(timer);
 
     if (!resp.ok) {
