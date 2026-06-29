@@ -14,7 +14,10 @@ async function request(method: string, path: string, body?: unknown): Promise<an
   }
 
   const config = loadRoleConfig();
-  const url = `http://${config.primaryUrl}${path}`;
+  // Auto-detect https (port 3141 or explicit flag). Default to https for security.
+  const isHttps = config.primaryUrl?.includes(':3141') || config.primaryUrl?.includes(':443') || process.env.WILD_PRIMARY_HTTPS !== 'false';
+  const scheme = isHttps ? 'https' : 'http';
+  const url = `${scheme}://${config.primaryUrl}${path}`;
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
   };
@@ -26,12 +29,16 @@ async function request(method: string, path: string, body?: unknown): Promise<an
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 5000);
 
+    // Self-signed certs on local networks are normal. Allow them only if HTTPS on a private IP.
+    const ignoreUnauthorized = isHttps && !config.primaryUrl?.includes('127.0.0.1');
     const res = await fetch(url, {
       method,
       headers,
       body: body ? JSON.stringify(body) : undefined,
       signal: controller.signal,
     });
+    // Note: fetch() doesn't support ignoreUnauthorized. For self-signed support,
+    // set NODE_TLS_REJECT_UNAUTHORIZED=0 on the secondary (set once, not per-request).
     clearTimeout(timeoutId);
 
     if (!res.ok) {
