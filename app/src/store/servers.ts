@@ -27,6 +27,8 @@ interface ServersState {
   profiles: ServerProfile[];
   activeId: string | null;
   info: ServerInfo | null;
+  /** True once AsyncStorage has been read on launch — guards the entry gate. */
+  hydrated: boolean;
   /** The currently active profile, or null if none is selected. */
   active: () => ServerProfile | null;
   /** Add (or replace by id) a profile; the first one paired becomes active. */
@@ -40,6 +42,7 @@ export const useServers = create<ServersState>((set, get) => ({
   profiles: [],
   activeId: null,
   info: null,
+  hydrated: false,
 
   active: () => {
     const { profiles, activeId } = get();

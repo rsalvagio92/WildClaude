@@ -50,7 +50,7 @@ function AppCore() {
       const activeId = await getJSON<string | null>('servers.activeId', null);
       const overrides = await getJSON<Record<string, boolean>>('features.overrides', {});
       if (!cancelled) {
-        useServers.setState({ profiles, activeId });
+        useServers.setState({ profiles, activeId, hydrated: true });
         useFeatures.setState({ overrides });
       }
     })();
