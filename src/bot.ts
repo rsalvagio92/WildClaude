@@ -778,13 +778,14 @@ export async function handleMessage(ctx: Context, message: string, forceVoiceRep
     // For streaming, this becomes the live-edited message. For non-streaming, it
     // gets deleted before the final response (see cleanup below).
     if (!streamMsgId) {
-      // More visible ack — shows which model picked, gives a verb the user
-      // can read. Edited later as tools fire (see onProgress below).
-      const ackText = routing.tier === 'COMPLEX'
-        ? '⏳ <i>Sto pensando (opus)…</i>'
-        : routing.tier === 'MEDIUM'
-          ? '⏳ <i>Lavoro sulla richiesta (sonnet)…</i>'
-          : '⏳ <i>Rispondo (haiku)…</i>';
+      // More visible ack — shows the ACTUAL model that will run (routing.model
+      // honors /model overrides), not the tier's default label.
+      const modelAlias = Object.entries(AVAILABLE_MODELS).find(([, v]) => v === routing.model)?.[0]
+        ?? routing.model.replace(/^claude-/, '');
+      const ackVerb = routing.tier === 'COMPLEX'
+        ? 'Sto pensando'
+        : routing.tier === 'MEDIUM' ? 'Lavoro sulla richiesta' : 'Rispondo';
+      const ackText = `⏳ <i>${ackVerb} (${modelAlias})…</i>`;
       try {
         const ackMsg = await ctx.reply(ackText, { parse_mode: 'HTML' });
         streamMsgId = ackMsg.message_id;
