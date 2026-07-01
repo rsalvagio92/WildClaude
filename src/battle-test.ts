@@ -4,7 +4,7 @@
  */
 import {
   initDatabase, getSession, setSession, clearSession,
-  createScheduledTask, getDueTasks, getAllScheduledTasks,
+  createScheduledTask, getDueTasks, getAllScheduledTasks, deleteScheduledTask,
   saveTokenUsage, getAgentTokenStats,
   logToHiveMind, getHiveMindEntries,
   logConversationTurn,
@@ -89,6 +89,10 @@ setSession('99999', 'legacy-session');
 assert('Legacy session (no agent_id) works', getSession('99999') === 'legacy-session');
 clearSession('99999');
 assert('Legacy clear works', getSession('99999') === undefined);
+
+// Cleanup: remove the scheduled tasks this test created so they never leak into
+// the live scheduler (they were the source of the daily "main bot task" spam).
+[`bt-main-${ts}`, `bt-ops-${ts}`, `bt-res-${ts}`].forEach(deleteScheduledTask);
 
 console.log(`\n=== ${passed} passed, ${failed} failed ===`);
 if (failed > 0) process.exit(1);
