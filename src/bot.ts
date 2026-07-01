@@ -214,8 +214,6 @@ const AVAILABLE_MODELS: Record<string, string> = {
   sonnet: MODELS.sonnet,
   haiku: MODELS.haiku,
 };
-const DEFAULT_MODEL_LABEL = 'opus';
-
 export function setMainModelOverride(model: string): void {
   if (ALLOWED_CHAT_ID) chatModelOverride.set(ALLOWED_CHAT_ID, model);
 }
@@ -1260,7 +1258,7 @@ export function createBot(): Bot {
       '/newchat — Start a new Claude session\n' +
       '/respin — Reload recent context\n' +
       '/voice — Toggle voice mode on/off\n' +
-      '/model — Switch model (opus/sonnet/haiku)\n' +
+      '/model — Force a model for everything (auto/fable/opus/sonnet/haiku)\n' +
       '/memory — View recent memories\n' +
       '/forget — Clear session\n' +
       '/learnlesson — Capture a lesson learned from an error\n' +
@@ -1426,15 +1424,15 @@ export function createBot(): Bot {
       const current = chatModelOverride.get(chatIdStr);
       const currentLabel = current
         ? Object.entries(AVAILABLE_MODELS).find(([, v]) => v === current)?.[0] ?? current
-        : DEFAULT_MODEL_LABEL + ' (default)';
-      const models = Object.keys(AVAILABLE_MODELS).join(', ');
-      await ctx.reply(`Current model: ${currentLabel}\nAvailable: ${models}\n\nUsage: /model haiku`);
+        : 'auto (routing SIMPLE→haiku / MEDIUM→sonnet / COMPLEX→opus)';
+      const models = ['auto', ...Object.keys(AVAILABLE_MODELS)].join(', ');
+      await ctx.reply(`Current model: ${currentLabel}\nAvailable: ${models}\n\n/model <name> forces that model for EVERYTHING in this chat.\n/model auto re-enables per-message routing.`);
       return;
     }
 
-    if (arg === 'reset' || arg === 'default' || arg === 'opus') {
+    if (arg === 'auto' || arg === 'reset' || arg === 'default') {
       chatModelOverride.delete(chatIdStr);
-      await ctx.reply('Model reset to default (opus)');
+      await ctx.reply('Model: auto — per-message routing (SIMPLE→haiku, MEDIUM→sonnet, COMPLEX→opus)');
       return;
     }
 
@@ -2305,8 +2303,9 @@ export function createBot(): Bot {
     if (queueBusy) {
       // Queue is busy — use smart routing instead of blind FIFO
 
-      // Fast-path: simple messages get answered by Haiku in parallel
-      if (activeSidecarCount < MAX_SIDECAR_SESSIONS) {
+      // Fast-path: simple messages get answered by Haiku in parallel.
+      // Skipped when a /model override is set — the user forced one model for everything.
+      if (activeSidecarCount < MAX_SIDECAR_SESSIONS && !chatModelOverride.get(chatIdStr)) {
         const routing = await classifyMessage(text);
         if (routing.tier === 'SIMPLE') {
           activeSidecarCount++;
